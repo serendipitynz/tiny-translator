@@ -1,10 +1,10 @@
 ---
 id: TASK-1
 title: macOS で llama-server により PLaMo 3 Translate を動かし速度とメモリを測る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-05 21:26'
+updated_date: '2026-11-05 21:41'
 labels: []
 milestone: m-0
 dependencies: []
