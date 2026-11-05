@@ -1,0 +1,8 @@
+[package]
+name = "measure_langdetect"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+whatlang = "=0.18.0"
