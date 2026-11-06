@@ -1,10 +1,10 @@
 ---
 id: TASK-3
 title: macOS でクリップボードを読むときの確認の有無を確かめる
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-06 04:23'
+updated_date: '2026-11-06 09:45'
 labels: []
 milestone: m-0
 dependencies: []
