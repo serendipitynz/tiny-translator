@@ -4,6 +4,57 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>tiny-translator</title>
+    <script id="color-scheme">
+      // Inline and in <head> so the chosen scheme is the first one painted: a module script runs
+      // after the first paint, which is the flash backlog-atlas shows (snz-design doc-7 §7.1, §7.2).
+      // Nothing is written back to storage here; a stored value is only read (doc-7 §6.1).
+      (() => {
+        const FAMILIES = ["standard", "solarized"];
+        const MODES = ["light", "dark", "auto"];
+
+        const read = (key) => {
+          try {
+            return window.localStorage.getItem(key);
+          } catch {
+            // Unreadable storage is drawn as the initial choice (doc-7 §5.2).
+            return null;
+          }
+        };
+
+        // A missing key reads as that axis's initial value (doc-7 §4.4), so the settings screen
+        // may save one axis at a time without the other drifting to some older default.
+        let family = read("colorFamily") ?? "standard";
+        let mode = read("colorMode") ?? "auto";
+        // Each axis is judged on its own before anything else; either one out of range draws the
+        // initial choice as a whole and leaves the stored value as it is (doc-7 §4.3, §5.1).
+        if (!FAMILIES.includes(family) || !MODES.includes(mode)) {
+          family = "standard";
+          mode = "auto";
+        }
+
+        const osDark = window.matchMedia("(prefers-color-scheme: dark)");
+        const root = document.documentElement;
+        // Both families carry a light and a dark side, so every (family, mode) pair is recorded
+        // and doc-7 §4.3's fall-back to "the side the family has" never applies here.
+        // The OS is consulted only while the choice is auto (doc-7 §4.3), and the attribute
+        // carries the resolved side, never "auto" (doc-10 §4).
+        const apply = () => {
+          root.setAttribute("data-color-family", family);
+          root.setAttribute("data-color-mode", mode === "auto" ? (osDark.matches ? "dark" : "light") : mode);
+        };
+
+        apply();
+        osDark.addEventListener("change", () => {
+          if (mode === "auto") {
+            apply();
+          }
+        });
+      })();
+    </script>
+    <!-- Linked here rather than imported from main.ts: a stylesheet in <head> blocks the first
+         paint, while one imported by the module script would arrive after it. -->
+    <link rel="stylesheet" href="/src/styles/snz-tokens.css" />
+    <link rel="stylesheet" href="/src/styles/global.scss" />
   </head>
   <body>
     <div id="app"></div>
