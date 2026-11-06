@@ -22,6 +22,11 @@
     // Block so an inline SVG's line box cannot add height the holder did not ask for.
     display: block;
     flex: none;
+    // doc-8 §6.6: --snz-figure by default; a holder with a face of its own sets --icon-color to the
+    // colour that sits on that face (--snz-on-accent on a primary button) and swaps it with the face.
+    // A custom property rather than `color` from the holder, because it inherits past this
+    // component's scoped styles without the holder reaching in with :global.
+    color: var(--icon-color, var(--snz-figure));
   }
 
   .sm {
