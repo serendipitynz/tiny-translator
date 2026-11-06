@@ -9,3 +9,16 @@ html {
 body {
   margin: 0;
 }
+
+// Out of sight but read aloud: the reason a disabled control carries, and the live region.
+.visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

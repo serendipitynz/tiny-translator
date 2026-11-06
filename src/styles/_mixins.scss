@@ -1,0 +1,13 @@
+// snz-design doc-8 §5.1: the ring is added outside the part. Recolouring the part's own outline
+// instead measures 1.31–1.80:1 against the surface in all four schemes, short of 3:1.
+@mixin focus-ring {
+  outline: var(--snz-border-focus) solid var(--snz-focus);
+  outline-offset: var(--snz-border-focus-offset);
+}
+
+// snz-design doc-8 §5.4: disabled is told by shape and fading, and the cursor stays the arrow.
+@mixin disabled-control {
+  opacity: var(--snz-opacity-disabled);
+  border-style: var(--snz-border-disabled-style);
+  cursor: default;
+}
