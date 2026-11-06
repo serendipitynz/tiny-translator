@@ -18,8 +18,9 @@
   textarea {
     box-sizing: border-box;
     inline-size: 100%;
+    // Exactly the panel body's height, however small: the field scrolls inside itself, and a floor
+    // here would push its lower lines out of a body that clips them.
     block-size: 100%;
-    min-block-size: calc(var(--snz-size-control) * 2);
     margin: 0;
     padding: var(--snz-space-sm) var(--snz-space-md);
     font: inherit;

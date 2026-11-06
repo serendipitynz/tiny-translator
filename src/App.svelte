@@ -113,10 +113,13 @@
     // area (the history list, say) ever shares the window.
     container: main / inline-size;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    // The panes may not shrink below their own minimum; when the window is shorter than that, main
+    // scrolls instead of the panes overlapping the translate button.
+    grid-template-rows: auto minmax(min-content, 1fr) auto;
     gap: var(--snz-space-md);
     min-block-size: 0;
     padding: var(--snz-space-md);
+    overflow-y: auto;
   }
 
   // Laid out on the panes' own columns, so each selector stands over the pane it names; the swap
@@ -126,11 +129,14 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--snz-space-md);
-    min-block-size: 0;
   }
 
   .directions {
     align-items: center;
+  }
+
+  .panes {
+    min-block-size: 0;
   }
 
   .source-direction {
@@ -150,7 +156,8 @@
   @container main (inline-size < 40rem) {
     .panes {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: repeat(2, minmax(0, 1fr));
+      // Stacked, each pane keeps room for its heading and a couple of lines (TextArea has no floor).
+      grid-template-rows: repeat(2, minmax(8rem, 1fr));
     }
   }
 </style>
