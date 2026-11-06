@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>clipboard_probe</title>
+<style>
+  body { font: 13px -apple-system, sans-serif; margin: 16px; }
+  textarea { width: 100%; height: 60px; }
+  pre { white-space: pre-wrap; background: #f3f3f3; padding: 8px; }
+</style>
+</head>
+<body>
+<button id="read">Read via plugin JS command</button>
+<p>Paste here with Cmd+V:</p>
+<textarea id="paste"></textarea>
+<pre id="log"></pre>
+<script>
+  const { invoke } = window.__TAURI__.core;
+  const show = async () => {
+    document.getElementById("log").textContent = (await invoke("log_lines")).join("\n");
+  };
+  document.getElementById("read").addEventListener("click", async () => {
+    try {
+      const text = await invoke("plugin:clipboard-manager|read_text");
+      await invoke("record", { line: `js read_text ok chars=${[...text].length} head=${JSON.stringify(text.slice(0, 40))}` });
+    } catch (error) {
+      await invoke("record", { line: `js read_text err ${error}` });
+    }
+    await show();
+  });
+  document.getElementById("paste").addEventListener("paste", async (event) => {
+    const text = event.clipboardData.getData("text/plain");
+    await invoke("record", { line: `cmd-v paste chars=${[...text].length} head=${JSON.stringify(text.slice(0, 40))}` });
+    await show();
+  });
+  show();
+</script>
+</body>
+</html>
