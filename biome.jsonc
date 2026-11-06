@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+
+  // `.jsonc` rather than `.json`: Biome parses `.json` as strict JSON, and a config that fails to
+  // load falls back to Biome's defaults silently instead of failing.
+  //
+  // Same shape as backlog-atlas, for the same measured reasons. The version is pinned exactly
+  // because a linter's minor release adds rules, and a range would let a fresh install fail a
+  // check nobody broke.
+  "formatter": {
+    // Biome's formatter de-indents a `.svelte` file's whole `<script>` block to column 0 and leaves
+    // `<style lang="scss">` untouched, so it cannot format this tree.
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      // No preset: Biome does not read Svelte markup, so the recommended set reports every import
+      // used only in markup as unused, with an "unsafe fix" that deletes it.
+      "preset": "none",
+      "style": {
+        "useBlockStatements": "error"
+      }
+    }
+  },
+  "files": {
+    // The hand-written sources named positively, so generated trees (`dist/`, `src-tauri/target/`)
+    // and whatever config a future tool drops at the root stay out unless listed here.
+    "includes": [
+      "src/**",
+      "vite.config.ts",
+      "vitest.config.ts",
+      "svelte.config.js"
+    ]
+  },
+  "assist": { "enabled": false },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  }
+}

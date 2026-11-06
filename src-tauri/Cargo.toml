@@ -1,0 +1,19 @@
+[package]
+name = "tiny-translator"
+version = "0.1.0"
+description = "A small desktop translator that runs PLaMo 3 Translate locally"
+authors = ["Takuya Otani"]
+edition = "2024"
+publish = false
+
+[lib]
+# The `_lib` suffix keeps the lib name distinct from the bin name; without it the two collide on
+# Windows. See https://github.com/rust-lang/cargo/issues/8519
+name = "tiny_translator_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
