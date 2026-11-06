@@ -28,6 +28,8 @@
     // and whatever config a future tool drops at the root stay out unless listed here.
     "includes": [
       "src/**",
+      // A verbatim copy of a snz-design release; `vendor.mjs verify` fails on any edit to it.
+      "!src/styles/snz-tokens.css",
       "vite.config.ts",
       "vitest.config.ts",
       "svelte.config.js"
