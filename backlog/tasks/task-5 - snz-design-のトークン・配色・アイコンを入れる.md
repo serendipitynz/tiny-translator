@@ -4,7 +4,7 @@ title: snz-design のトークン・配色・アイコンを入れる
 status: In Review
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-06 22:27'
+updated_date: '2026-11-06 22:48'
 labels: []
 milestone: m-1
 dependencies:
@@ -68,4 +68,9 @@ ordinal: 5000
 
 - AC#3 は未チェック。ブラウザで prefers-color-scheme を Light → Dark へ切り替え、再読み込みなしで `data-color-mode` と canvas が追うことは見た (Light・Dark を明示したときは追わない)。macOS の外観を実際に切り替えて Tauri の WKWebView が追うことは、システム設定を変えることになるため AI 側では行っていない。`pnpm tauri dev` で OS の外観を切り替えて確かめてほしい。
 - Tauri の WebView の中での最初の描画 (保存値ありの起動でちらつかないこと) は見ていない。属性は head の同期スクリプトが body より前に置くので、構造上は最初の描画より前になる。
+
+## レビュー対応 (PR#5 の 1 回目、P3)
+
+- 図形の色が置いた先の文字色 (`--snz-fg`) を継いでおり、doc-8 §6.6 の既定 `--snz-figure` と違っていた。`Icon.svelte` の既定を `var(--icon-color, var(--snz-figure))` にした。面を持つ部品 (主操作のボタンなど) は `--icon-color` に面の上の色 (`--snz-on-accent` など) を渡す。holder の `color` で渡す形にしなかったのは、scoped のスタイルの内側へ `:global` で手を入れずに済むため。
+- 4 配色すべてで、何も渡さない図形が `--snz-figure` の値になり、`--icon-color: var(--snz-on-accent)` を渡した面の上では `--snz-on-accent` の値になることをブラウザで確かめた (確認用の表示は戻した)。
 <!-- SECTION:NOTES:END -->
