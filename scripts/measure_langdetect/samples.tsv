@@ -1,0 +1,136 @@
+# group	expected	length	text
+# group: the row group in the result table. expected: the language the app should
+# decide (zh covers both Simplified and Traditional, since whatlang has one Lang for
+# them). length: word / sentence / paragraph.
+ja	ja	word	ありがとう
+ja	ja	word	こんにちは
+ja	ja	word	コーヒー
+ja	ja	word	スケジュール
+ja	ja	word	お疲れ様です
+ja	ja	word	確認します
+ja	ja	word	よろしく
+ja	ja	word	締め切り
+ja	ja	sentence	明日の会議は午後三時からに変更になりました。
+ja	ja	sentence	この資料を来週までに確認していただけますか。
+ja	ja	sentence	東京駅に着いたら連絡してください。
+ja	ja	sentence	設定画面で第一優先言語を選べます。
+ja	ja	sentence	申し訳ありませんが、本日は臨時休業いたします。
+ja	ja	sentence	新しい版では起動時間が半分になった。
+ja	ja	paragraph	来週の月曜日に予定していた打ち合わせは、デザインチームの何人かが出張するため、火曜日の午前に移しました。それまでに添付の草案に目を通し、気になる点があればプロジェクトのチャンネルへ書き込んでください。参加できない場合は前もって知らせてもらえれば、議事録を後で共有します。
+ja	ja	paragraph	このアプリは、手元の計算機だけで翻訳を行います。原文を外部のサービスへ送らないので、社外秘の文書でも安心して使えます。ただし、モデルの読み込みには数秒かかるため、起動直後は翻訳ボタンが処理中の表示になります。
+ja-kanji	ja	word	東京駅
+ja-kanji	ja	word	会議室
+ja-kanji	ja	word	確認
+ja-kanji	ja	word	日本語
+ja-kanji	ja	word	予定表
+ja-kanji	ja	word	締切
+ja-kanji	ja	word	株式会社
+ja-kanji	ja	word	駐車場
+ja-kanji	ja	word	新幹線
+ja-kanji	ja	word	取扱説明書
+ja-kanji	ja	sentence	本日休業
+ja-kanji	ja	sentence	関係者以外立入禁止
+ja-kanji	ja	sentence	会議資料送付済
+ja-kanji	ja	sentence	明日午前十時集合
+ja-kanji	ja	sentence	営業時間変更之御知
+ja-kanji	ja	sentence	駐車場満車
+ja-kanji	ja	sentence	新幹線乗換口
+ja-kanji	ja	sentence	図書館休館日
+en	en	word	Hello
+en	en	word	Thanks
+en	en	word	meeting
+en	en	word	deadline
+en	en	word	cancel
+en	en	word	translation
+en	en	word	Settings
+en	en	word	Good morning
+en	en	word	OK
+en	en	word	weather
+en	en	sentence	The meeting has been moved to next Monday.
+en	en	sentence	Could you review this document by Friday?
+en	en	sentence	Please let me know when you arrive.
+en	en	sentence	I'm sorry, we are closed today.
+en	en	sentence	The new version starts twice as fast.
+en	en	sentence	Where is the nearest train station?
+en	en	paragraph	The meeting has been moved to next Monday because several members of the design team will be travelling this week. Please review the attached draft before then and send any comments to the project channel. If you cannot attend, let us know in advance so that we can share the notes with you afterwards.
+en	en	paragraph	This app translates text on your own computer. Because nothing is sent to an external service, you can use it for confidential documents. Loading the model takes a few seconds, so the translate button shows a busy state right after launch.
+en	en	sentence	Thank you for your help.
+en	en	sentence	See you tomorrow.
+en	en	sentence	The build failed on CI.
+en	en	sentence	Can we move the call to 3 pm?
+en	en	sentence	This file is too large to upload.
+en	en	sentence	Did you get my message?
+en	en	sentence	Please restart the app and try again.
+en	en	sentence	I will be out of the office next week.
+en	en	sentence	The store opens at ten in the morning.
+en	en	sentence	Let me know if you have any questions.
+en	en	sentence	Happy birthday!
+en	en	sentence	Not found
+en	en	sentence	Permission denied
+en	en	sentence	Save changes before closing?
+zh-Hans	zh	word	你好
+zh-Hans	zh	word	谢谢
+zh-Hans	zh	word	会议
+zh-Hans	zh	word	翻译
+zh-Hans	zh	word	设置
+zh-Hans	zh	word	图书馆
+zh-Hans	zh	word	我们
+zh-Hans	zh	word	没问题
+zh-Hans	zh	sentence	我明天下午三点有一个会议。
+zh-Hans	zh	sentence	请在星期五之前把文件发给我。
+zh-Hans	zh	sentence	这个功能什么时候上线？
+zh-Hans	zh	sentence	对不起，我们今天不营业。
+zh-Hans	zh	sentence	新版本的启动速度快了一倍。
+zh-Hans	zh	sentence	最近的火车站在哪里？
+zh-Hans	zh	paragraph	原定下周一的会议改到了周二上午，因为设计团队有几位同事这周要出差。请在那之前看一下附件里的草稿，有意见的话请发到项目频道。如果不能参加，请提前告诉我们，我们会在会后分享会议记录。
+zh-Hans	zh	paragraph	这个应用只在你自己的电脑上进行翻译。原文不会发送到外部服务，所以机密文件也可以放心使用。不过加载模型需要几秒钟，所以刚启动时翻译按钮会显示为处理中。
+zh-Hant	zh	word	你好
+zh-Hant	zh	word	謝謝
+zh-Hant	zh	word	會議
+zh-Hant	zh	word	翻譯
+zh-Hant	zh	word	設定
+zh-Hant	zh	word	圖書館
+zh-Hant	zh	word	我們
+zh-Hant	zh	word	沒問題
+zh-Hant	zh	sentence	我明天下午三點有一個會議。
+zh-Hant	zh	sentence	請在星期五之前把文件寄給我。
+zh-Hant	zh	sentence	這個功能什麼時候上線？
+zh-Hant	zh	sentence	對不起，我們今天沒有營業。
+zh-Hant	zh	sentence	新版本的啟動速度快了一倍。
+zh-Hant	zh	sentence	最近的火車站在哪裡？
+zh-Hant	zh	paragraph	原定下週一的會議改到了週二上午，因為設計團隊有幾位同事這週要出差。請在那之前看一下附件裡的草稿，有意見的話請發到專案頻道。如果不能參加，請提前告訴我們，我們會在會後分享會議記錄。
+zh-Hant	zh	paragraph	這個應用程式只在你自己的電腦上進行翻譯。原文不會傳送到外部服務，所以機密文件也可以放心使用。不過載入模型需要幾秒鐘，所以剛啟動時翻譯按鈕會顯示為處理中。
+ko	ko	word	안녕하세요
+ko	ko	word	감사합니다
+ko	ko	word	회의
+ko	ko	word	번역
+ko	ko	word	설정
+ko	ko	word	도서관
+ko	ko	word	괜찮아요
+ko	ko	word	마감
+ko	ko	sentence	내일 오후 세 시에 회의가 있습니다.
+ko	ko	sentence	금요일까지 이 문서를 검토해 주시겠어요?
+ko	ko	sentence	도착하면 연락 주세요.
+ko	ko	sentence	죄송하지만 오늘은 영업하지 않습니다.
+ko	ko	sentence	새 버전은 시작 속도가 두 배 빨라졌습니다.
+ko	ko	sentence	가장 가까운 기차역이 어디예요?
+ko	ko	paragraph	다음 주 월요일로 예정되어 있던 회의는 디자인 팀의 몇 명이 이번 주에 출장을 가기 때문에 화요일 오전으로 옮겼습니다. 그 전에 첨부한 초안을 읽어 보시고, 의견이 있으면 프로젝트 채널에 남겨 주세요.
+ko	ko	paragraph	이 앱은 사용자의 컴퓨터에서만 번역을 합니다. 원문을 외부 서비스로 보내지 않으므로 기밀 문서에도 안심하고 사용할 수 있습니다. 다만 모델을 불러오는 데 몇 초가 걸리기 때문에 시작 직후에는 번역 버튼이 처리 중으로 표시됩니다.
+ja-latin	ja	sentence	React の useEffect が 2 回呼ばれる
+ja-latin	ja	sentence	PR をレビューしてください
+ja-latin	ja	sentence	git rebase して force push した
+ja-latin	ja	sentence	Slackで連絡します
+ja-latin	ja	sentence	cargo test が CI だけで落ちる
+ja-latin	ja	sentence	README の Getting Started を参照
+en-cjk	en	sentence	Please check the 設定 screen.
+en-cjk	en	sentence	The word 締め切り means deadline.
+en-cjk	en	sentence	Open the 翻訳 tab and paste your text there.
+latin-other	fra	sentence	La réunion est reportée à lundi prochain.
+latin-other	fra	sentence	Merci beaucoup pour votre aide.
+latin-other	fra	sentence	Où se trouve la gare la plus proche ?
+latin-other	deu	sentence	Das Treffen wurde auf nächsten Montag verschoben.
+latin-other	deu	sentence	Vielen Dank für Ihre Hilfe.
+latin-other	deu	sentence	Wo ist der nächste Bahnhof?
+latin-other	spa	sentence	La reunión se ha pasado al próximo lunes.
+latin-other	spa	sentence	Muchas gracias por tu ayuda.
+latin-other	spa	sentence	¿Dónde está la estación de tren más cercana?
