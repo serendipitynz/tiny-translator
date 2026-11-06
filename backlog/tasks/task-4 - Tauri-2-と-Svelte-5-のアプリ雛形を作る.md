@@ -1,10 +1,10 @@
 ---
 id: TASK-4
 title: Tauri 2 と Svelte 5 のアプリ雛形を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-06 22:10'
+updated_date: '2026-11-06 22:19'
 labels: []
 milestone: m-1
 dependencies: []
