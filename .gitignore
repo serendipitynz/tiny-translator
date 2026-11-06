@@ -1,0 +1,9 @@
+.DS_Store
+
+node_modules/
+# Anchored: scripts/clipboard_probe/dist/ is a tracked static page, not build output.
+/dist/
+
+src-tauri/target/
+# Tauri regenerates the capability schemas on every build.
+src-tauri/gen/
