@@ -1,10 +1,10 @@
 ---
 id: TASK-5
 title: snz-design のトークン・配色・アイコンを入れる
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-06 22:48'
+updated_date: '2026-11-06 22:53'
 labels: []
 milestone: m-1
 dependencies:
@@ -28,7 +28,7 @@ ordinal: 5000
 <!-- AC:BEGIN -->
 - [x] #1 tokens-v0.1.1 の snz-tokens.css を vendor.mjs copy で写し、vendor.mjs verify が通る
 - [x] #2 配色系統 (標準・Solarized) と明暗の選択 (Light・Dark・OS 追従) を保存値から読み、最初の描画より前に data-color-family と data-color-mode を設定している
-- [ ] #3 OS 追従のとき、OS の明暗の変更に再起動なしで追う
+- [x] #3 OS 追従のとき、OS の明暗の変更に再起動なしで追う
 - [x] #4 lucide の座標をコピーした Icon コンポーネントがあり、lucide のライセンス表示を同梱している
 <!-- AC:END -->
 
@@ -73,4 +73,9 @@ ordinal: 5000
 
 - 図形の色が置いた先の文字色 (`--snz-fg`) を継いでおり、doc-8 §6.6 の既定 `--snz-figure` と違っていた。`Icon.svelte` の既定を `var(--icon-color, var(--snz-figure))` にした。面を持つ部品 (主操作のボタンなど) は `--icon-color` に面の上の色 (`--snz-on-accent` など) を渡す。holder の `color` で渡す形にしなかったのは、scoped のスタイルの内側へ `:global` で手を入れずに済むため。
 - 4 配色すべてで、何も渡さない図形が `--snz-figure` の値になり、`--icon-color: var(--snz-on-accent)` を渡した面の上では `--snz-on-accent` の値になることをブラウザで確かめた (確認用の表示は戻した)。
+
+## マージ後
+
+- AC#3: オーナーが `pnpm tauri dev` で macOS の外観をライト・ダークに切り替え、再起動なしで背景 (canvas) が追うことを Tauri の WebView で確かめた (2026-11-07)。
+- PR#5 でマージした。
 <!-- SECTION:NOTES:END -->
