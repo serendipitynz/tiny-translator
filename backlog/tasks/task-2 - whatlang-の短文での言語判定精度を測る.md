@@ -1,10 +1,10 @@
 ---
 id: TASK-2
 title: whatlang の短文での言語判定精度を測る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-05 23:12'
+updated_date: '2026-11-06 04:01'
 labels: []
 milestone: m-0
 dependencies: []
