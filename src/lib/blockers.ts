@@ -12,3 +12,7 @@ export function copyBlocker(text: string, what: "原文" | "訳文"): string | n
 export function clearBlocker(source: string): string | null {
   return source === "" ? "原文はすでに空です" : null;
 }
+
+export function stopBlocker(translating: boolean): string | null {
+  return translating ? null : "翻訳していないので停止できません";
+}

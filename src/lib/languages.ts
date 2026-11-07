@@ -16,3 +16,15 @@ const LANGUAGES: readonly SelectOption[] = [
 export const SOURCE_OPTIONS: readonly SelectOption[] = [{ value: AUTO, label: "自動判定" }, ...LANGUAGES];
 
 export const TARGET_OPTIONS: readonly SelectOption[] = [{ value: AUTO, label: "自動 (優先順位)" }, ...LANGUAGES];
+
+/**
+ * The languages the prompt names for the selected direction. Until TASK-10 settles the direction
+ * (doc-1 §6.1, §6.2), an automatic source is left to the model and an automatic target is the
+ * default first-priority language, Japanese.
+ */
+export function promptLanguages(source: string, target: string): { source: string | null; target: string } {
+  return {
+    source: source === AUTO ? null : source,
+    target: target === AUTO ? "ja" : target,
+  };
+}
