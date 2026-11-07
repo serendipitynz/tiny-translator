@@ -1,10 +1,10 @@
 ---
 id: TASK-10
 title: 翻訳の向き (翻訳元言語の判定と優先順位による翻訳先の決定) を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-07 06:37'
+updated_date: '2026-11-07 06:45'
 labels: []
 milestone: m-2
 dependencies:
@@ -23,7 +23,7 @@ R5 の中心。翻訳元は自動判定を基本にし、翻訳先は第一優�
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 翻訳元の選択欄が自動判定のとき whatlang で判定し、判定した言語を画面に出す
+- [x] #1 翻訳元の選択欄が自動判定のとき whatlang で判定し、判定した言語を画面に出す
 - [x] #2 翻訳先の選択欄が「自動 (優先順位)」のとき、doc-1 §6.2 の規則で翻訳先を決める
 - [x] #3 選択欄で言語を指定するとその言語に固定される
 - [x] #4 入れ替えボタンで翻訳元と翻訳先の選択と、訳文と原文が入れ替わる
@@ -68,4 +68,9 @@ R5 の中心。翻訳元は自動判定を基本にし、翻訳先は第一優�
 ## 確かめていないこと
 
 - AC#1 を実アプリの WebView から通しで動かすこと。ネイティブのウィンドウを操作する手段がこのセッションに無い。Rust の判定 (単体テスト) と画面 (IPC を差し替え) は別々に確かめたが、実 WebView から detect_language を呼ぶ経路は未確認なので AC#1 は未チェックのまま残した。pnpm tauri dev で英文と日本文を入れ、「判定:」の表示と翻訳の向きを一度試せば確かめられる。
+
+## マージ後の確認
+
+- AC#1: オーナーが実アプリ (pnpm tauri dev) で確かめた (2026-11-07)。実 WebView から detect_language を呼ぶ経路もこれで確認できた。
+- PR: https://github.com/serendipitynz/tiny-translator/pull/10
 <!-- SECTION:NOTES:END -->
