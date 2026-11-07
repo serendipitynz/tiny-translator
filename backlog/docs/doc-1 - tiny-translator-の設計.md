@@ -3,7 +3,7 @@ id: doc-1
 title: tiny-translator の設計
 type: specification
 created_date: '2026-11-05 19:39'
-updated_date: '2026-11-06 04:28'
+updated_date: '2026-11-07 02:55'
 ---
 # tiny-translator 設計
 
@@ -82,6 +82,12 @@ backlog-atlas (`../backlog-atlas`) と同じ構成にし、snz-design の適用�
 
 Windows on ARM と Linux は対象外とし、需要が出たら検討する。
 
+**sidecar はソースから静的にビルドする** (TASK-8、2026-11-07 オーナー判断)。GitHub リリースの macOS 版 llama-server は 50 KB の本体が
+`@loader_path` 経由で dylib を 10 個以上読み込む形で、Tauri の `bundle.externalBin` が同梱する 1 ファイルに収まらないためである。
+`scripts/build-llama-server.sh` が TASK-1 と同じ b12110 (commit `cd959bae9`) を `BUILD_SHARED_LIBS=OFF`・`GGML_METAL_EMBED_LIBRARY=ON`・
+`LLAMA_CURL=OFF`・`LLAMA_OPENSSL=OFF`・`GGML_NATIVE=OFF` (M1 で動かない命令を使わないため) でビルドし、`src-tauri/binaries/` (追跡しない) へ置く。
+できるバイナリは約 23 MB で、OS の外のライブラリをリンクしていない (スクリプトが `otool -L` で確かめる)。Windows の Vulkan 版のビルドは TASK-12 で決める。
+
 ### 4.3 プロンプト
 
 PLaMo 3 Translate は PFML3 形式のプロンプトを取る (モデルカード)。例:
@@ -155,13 +161,26 @@ GGUF は Hugging Face の `pfnet/plamo-3-translate-{0.8b,2b,8b}-GGUF` の Q4_K_M
 - 計測中に他のアプリでメモリが足りなくなると (スワップ 14 GB の状態)、2B が 7〜12 tok/s、8B が 3〜4 tok/s に落ち、回ごとのばらつきも大きくなった。
   上の表は LM Studio・Chrome などを終了し、スワップが 4 GB まで減った状態で測った。
 
-llama-server の引数について分かったこと (どれを使うかは翻訳エンジンのタスク (m-2) で決める):
+llama-server の引数について分かったこと (どれを使うかは下の「アプリが使う引数」に書いた):
 
 - `--cache-ram` (プロンプトのキャッシュ) の既定は 8,192 MiB で、上限まで RAM を使いうる。R6 のため `--cache-ram 0` か小さい値にすることを検討する。
 - 起動時にメモリへ収まるよう引数を調整する処理 (`-fit`、既定で有効) に約 0.9 秒かかる。`-fit off` にすると読み込み時間が 0.8〜1.2 秒 (0.8B・2B) になる。
   ただし、メモリが足りない機械で自動調整が効かなくなる。
 - 以前の `--no-mmap` は `--load-mode` (`-lm`) に置き換わっている。`-lm none` で mmap をやめると、重みがアクティビティモニタの「メモリ」にも出るようになるが、
   使用済みメモリと生成速度は変わらなかった。
+
+#### アプリが使う引数 (TASK-8)
+
+`-m <GGUF> -c 8192 --parallel 1 --host 127.0.0.1 --port <空きポート> --cache-ram 0 --no-webui` (2026-11-07 オーナー判断)。
+
+- `--cache-ram 0`: プロンプトのキャッシュに RAM を使わない (R6)。翻訳ごとに原文が違い、長い共通部分を再利用できる場面が少ないため。
+- `--no-webui`: llama-server がブラウザ向けに出す画面を出さない。翻訳エンジンはアプリ専用である。
+- `-fit` は既定 (有効) のままにする。約 0.9 秒かかるが、`-fit off` にするとメモリの足りない機械で自動調整が効かなくなる。
+- `-lm` は既定 (mmap) のままにする。`-lm none` にしても使用済みメモリと生成速度は変わらなかった (上の実測)。
+- llama-server の出力は、アプリのログディレクトリ (macOS では `~/Library/Logs/com.serendipitynz.tiny-translator/`) の `llama-server.log` に起動のたびに書き直す。
+- 読み込み中に llama-server がすぐ終了したときは、新しい空きポートで起動し直す (1 回の起動につき 3 回まで)。空きポートを選んで手放した直後は、
+  macOS がそのポートを短い間 (10 ms 以内) 使用中のままにすることがあり、llama-server がポートを取れずに終了するためである (TASK-8 のテストで観測)。
+- 読み込みの待ちは 180 秒で打ち切る。スワップが 13 GB ある状態では、2B の読み込みに 3〜30 秒かかった (リリース版と静的ビルドで同じ。TASK-8)。
 
 **まだ測っていないこと**: 16 GB の機械と M1、Z1 (TASK-12)、再起動直後などページキャッシュに GGUF が無い状態の読み込み時間。
 先行事例の実測では、2B Q4_K_M を Ryzen 9 9950X の CPU で動かしたとき約 19.5 tok/s だった (doc-2)。
@@ -172,6 +191,9 @@ llama-server の引数について分かったこと (どれを使うかは翻�
 - ウィンドウの位置と大きさを保存する (`tauri-plugin-window-state`)。
 - 起動直後に翻訳エンジンを先に起動しておく (クリップボードが空でも)。読み込みの待ち時間を、利用者が原文を貼るまでの間に隠すため。
 - アプリ終了時に翻訳エンジンを必ず終了する。アプリが異常終了して子プロセスが残った場合に備え、起動時に前回の PID を確かめて残っていれば終了する。
+  PID はアプリデータディレクトリの `engine.pid` に置く。終了するのは、その PID のプロセスがアプリの sidecar と同じパスで起動されたものであるときだけにする
+  (PID が別のプロセスに使い回されていた場合、たとえば LM Studio の llama-server を止めないため)。
+- 自動解放までの時間は、翻訳エンジンが読み込みを終えた時点と、翻訳が終わるたびに数え始める。翻訳中は数えない。
 
 ## 6. 翻訳の向き
 
@@ -386,6 +408,9 @@ PLaMo 翻訳の画面に倣う。
 - モデルは PLaMo Community License で提供される。個人利用と非商用利用は無料、年商 10 億円以下の商用利用は登録すれば無料。
   再配布するとライセンスが配布先へ及ぶ。翻訳結果を公開するときは PLaMo の出力であることを示す必要がある (doc-2)。
 - **開発中 (m-0〜m-4) は、モデルファイルを手で所定のディレクトリへ置く。** アプリは起動時にそのディレクトリの GGUF を一覧にする。
+  所定のディレクトリはアプリデータディレクトリの `models/` (macOS では `~/Library/Application Support/com.serendipitynz.tiny-translator/models/`) で、
+  シンボリックリンクでもよい。使うのは `plamo-3-translate-2b-Q4_K_M.gguf` があればそれ、無ければ名前順で最初の `.gguf` (TASK-8)。
+  GGUF が無いときは翻訳エンジンを停止中のままにし、理由を画面へ通知する。選べるようにするのは設定画面 (TASK-21)。
 - 配布するときのモデルの入手方法 (アプリへの同梱、初回のダウンロード、手元のファイルの取り込み) は m-5 で決める。
   先行事例は同梱せず、アプリ内でライセンスに同意させてから Hugging Face からダウンロードしている。
 - 画面のどこかに「Built with PLaMo」を表示する (ライセンスの表示義務の確認は m-5 で行う)。
