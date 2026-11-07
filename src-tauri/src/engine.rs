@@ -545,13 +545,17 @@ pub fn choose_model(dir: &Path) -> io::Result<PathBuf> {
 /// 既定のモデル (doc-1 §4.4): 2B Q4_K_M, under the name Hugging Face publishes it as.
 pub const DEFAULT_MODEL: &str = "plamo-3-translate-2b-Q4_K_M.gguf";
 
+/// The engine's context length in tokens (doc-1 §4.5): prompt and translation together.
+pub const CONTEXT_TOKENS: usize = 8192;
+
 /// llama-server's arguments (doc-1 §4.5).
 pub fn server_args(model: &Path, port: u16) -> Vec<std::ffi::OsString> {
     let mut args: Vec<std::ffi::OsString> = vec!["-m".into(), model.into()];
     let port = port.to_string();
+    let context = CONTEXT_TOKENS.to_string();
     for arg in [
         "-c",
-        "8192",
+        &context,
         "--parallel",
         "1",
         "--host",

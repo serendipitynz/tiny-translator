@@ -20,14 +20,28 @@ const STOP: [&str; 2] = ["<|plamo:tag|>", "<|plamo:bos|>"];
 /// The PFML3 prompt for translating `text` into `target`, with the source language when the app
 /// knows it (doc-1 §6.1's 判定なし leaves it to the model). Without the leading `<|plamo:bos|>`,
 /// which llama-server adds.
-pub fn prompt(text: &str, target: &str, source: Option<&str>) -> String {
+///
+/// `history` is an earlier source text and its translation, put before `text` as the official
+/// `chat_template.jinja` puts its earlier messages: as an input and an output of their own, so the
+/// model carries their wording on (doc-1 §7.3).
+pub fn prompt(
+    text: &str,
+    target: &str,
+    source: Option<&str>,
+    history: Option<(&str, &str)>,
+) -> String {
     let source = source
         .map(|lang| format!("<|plamo:key|>lang<|plamo:val|>{lang}"))
         .unwrap_or_default();
+    let output = format!("<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>{target}<|plamo:msg|>");
+    let history = history
+        .map(|(earlier, translation)| {
+            format!("<|plamo:tag|>input{source}<|plamo:msg|>{earlier}{output}{translation}")
+        })
+        .unwrap_or_default();
     format!(
-        "<|plamo:tag|>dataset<|plamo:msg|>translation\
-         <|plamo:tag|>input{source}<|plamo:msg|>{text}\
-         <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>{target}<|plamo:msg|>"
+        "<|plamo:tag|>dataset<|plamo:msg|>translation{history}\
+         <|plamo:tag|>input{source}<|plamo:msg|>{text}{output}"
     )
 }
 
@@ -62,6 +76,17 @@ impl Outcome {
     }
 }
 
+/// How one request to `/completion` ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Completion {
+    /// The engine finished it.
+    Done,
+    /// The caller's `on_piece` cut it off.
+    Cut,
+    /// [`Translator::stop`] or a newer translation ended it first.
+    Stopped,
+}
+
 /// Which translation is running, so that it can be stopped. One at a time: the engine has a
 /// single slot (`--parallel 1`), and starting a translation stops the one before it.
 #[derive(Default)]
@@ -81,6 +106,15 @@ pub struct Cancel {
 impl Cancel {
     fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
+        if let Some(stream) = lock(&self.stream).take() {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+    }
+
+    /// Closes the connection of a request that has ended, so a cut-off generation is cancelled
+    /// too: the reader holds only a clone of the stream, and closing one clone leaves the socket
+    /// open.
+    fn release(&self) {
         if let Some(stream) = lock(&self.stream).take() {
             let _ = stream.shutdown(Shutdown::Both);
         }
@@ -136,18 +170,19 @@ impl Translator {
 }
 
 /// Sends `prompt` to the engine at `port` and hands each piece of the translation to `on_piece` as
-/// it is generated.
+/// it is generated, until `on_piece` answers `false`.
 pub fn stream(
     port: u16,
     api_key: &str,
     prompt: &str,
     cancel: &Cancel,
-    on_piece: impl FnMut(&str),
-) -> Result<Outcome, String> {
+    on_piece: impl FnMut(&str) -> bool,
+) -> Result<Completion, String> {
     let result = send(port, api_key, prompt, cancel, on_piece);
+    cancel.release();
     // A stop shows up as a read or write failing on the closed connection; it is not an error.
     if cancel.is_stopped() {
-        return Ok(Outcome::Stopped);
+        return Ok(Completion::Stopped);
     }
     result
 }
@@ -157,16 +192,88 @@ fn send(
     api_key: &str,
     prompt: &str,
     cancel: &Cancel,
-    on_piece: impl FnMut(&str),
-) -> Result<Outcome, String> {
+    on_piece: impl FnMut(&str) -> bool,
+) -> Result<Completion, String> {
     let failed = |err: io::Error| format!("could not reach the engine: {err}");
-    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).map_err(failed)?;
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).map_err(failed)?;
     if !cancel.attach(&stream).map_err(failed)? {
-        return Ok(Outcome::Stopped);
+        return Ok(Completion::Stopped);
     }
-    let body = request_body(prompt);
+    let reader =
+        post(stream, port, api_key, "/completion", &request_body(prompt)).map_err(failed)?;
+    read_completion(reader, on_piece)
+}
+
+/// Reads an HTTP response to `/completion`: a 200 carries the translation as server-sent events, and
+/// anything else carries llama-server's error.
+fn read_completion(
+    reader: impl BufRead,
+    on_piece: impl FnMut(&str) -> bool,
+) -> Result<Completion, String> {
+    match read_body(reader).map_err(|err| format!("lost the engine's answer: {err}"))? {
+        Ok(body) => read_events(body, on_piece),
+        Err(refusal) => Err(format!("the engine refused the translation ({refusal})")),
+    }
+}
+
+/// The engine at `port`, as [`crate::document`] translates through it, under `cancel`.
+pub struct EngineModel<'a> {
+    pub port: u16,
+    pub api_key: &'a str,
+    pub cancel: &'a Cancel,
+}
+
+impl crate::document::Model for EngineModel<'_> {
+    fn tokens(&mut self, text: &str) -> Result<usize, String> {
+        tokens(self.port, self.api_key, text)
+    }
+
+    fn complete(
+        &mut self,
+        prompt: &str,
+        on_piece: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<Completion, String> {
+        stream(self.port, self.api_key, prompt, self.cancel, on_piece)
+    }
+}
+
+/// How many tokens `text` takes in a prompt, by the engine's own tokenizer (`/tokenize`).
+pub fn tokens(port: u16, api_key: &str, text: &str) -> Result<usize, String> {
+    let failed = |err: io::Error| format!("could not count the tokens: {err}");
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).map_err(failed)?;
+    let reader = post(
+        stream,
+        port,
+        api_key,
+        "/tokenize",
+        &json!({ "content": text }).to_string(),
+    )
+    .map_err(failed)?;
+    let mut answer = String::new();
+    match read_body(reader).map_err(failed)? {
+        Ok(mut body) => body.read_to_string(&mut answer).map_err(failed)?,
+        Err(refusal) => {
+            return Err(format!(
+                "the engine refused to count the tokens ({refusal})"
+            ));
+        }
+    };
+    serde_json::from_str::<Value>(&answer)
+        .ok()
+        .and_then(|value| value.get("tokens")?.as_array().map(Vec::len))
+        .ok_or_else(|| format!("could not read the token count: {answer}"))
+}
+
+/// Sends a JSON `body` to `path`, and answers the stream to read the response from.
+fn post(
+    mut stream: TcpStream,
+    port: u16,
+    api_key: &str,
+    path: &str,
+    body: &str,
+) -> io::Result<BufReader<TcpStream>> {
     let request = format!(
-        "POST /completion HTTP/1.1\r\n\
+        "POST {path} HTTP/1.1\r\n\
          Host: 127.0.0.1:{port}\r\n\
          Authorization: Bearer {api_key}\r\n\
          Content-Type: application/json\r\n\
@@ -174,16 +281,17 @@ fn send(
          Connection: close\r\n\r\n{body}",
         body.len()
     );
-    stream.write_all(request.as_bytes()).map_err(failed)?;
-    read_response(BufReader::new(stream), on_piece)
+    stream.write_all(request.as_bytes())?;
+    Ok(BufReader::new(stream))
 }
 
-/// Reads an HTTP response to `/completion`: a 200 carries the translation as server-sent events, and
-/// anything else carries llama-server's error.
-fn read_response(mut reader: impl BufRead, on_piece: impl FnMut(&str)) -> Result<Outcome, String> {
-    let failed = |err: io::Error| format!("lost the engine's answer: {err}");
-    let head = read_head(&mut reader).map_err(failed)?;
-    let body: Box<dyn Read + '_> = if head.chunked {
+/// The body of an HTTP response when it is a 200, or else the status and llama-server's error.
+#[allow(clippy::type_complexity)]
+fn read_body<'a>(
+    mut reader: impl BufRead + 'a,
+) -> io::Result<Result<Box<dyn BufRead + 'a>, String>> {
+    let head = read_head(&mut reader)?;
+    let body: Box<dyn Read + 'a> = if head.chunked {
         Box::new(Chunked::new(reader))
     } else if let Some(length) = head.content_length {
         Box::new(reader.take(length))
@@ -194,13 +302,13 @@ fn read_response(mut reader: impl BufRead, on_piece: impl FnMut(&str)) -> Result
     if head.status != 200 {
         let mut text = String::new();
         let _ = body.read_to_string(&mut text);
-        return Err(format!(
-            "the engine refused the translation (HTTP {}): {}",
+        return Ok(Err(format!(
+            "HTTP {}: {}",
             head.status,
             error_message(&text)
-        ));
+        )));
     }
-    read_events(body, on_piece)
+    Ok(Ok(Box::new(body)))
 }
 
 struct Head {
@@ -257,8 +365,8 @@ fn read_line(reader: &mut impl BufRead) -> io::Result<Option<String>> {
 /// `stop` is true on the last one.
 fn read_events(
     mut reader: impl BufRead,
-    mut on_piece: impl FnMut(&str),
-) -> Result<Outcome, String> {
+    mut on_piece: impl FnMut(&str) -> bool,
+) -> Result<Completion, String> {
     loop {
         let line = read_line(&mut reader)
             .map_err(|err| format!("lost the engine's answer: {err}"))?
@@ -273,11 +381,12 @@ fn read_events(
         }
         if let Some(piece) = event.get("content").and_then(Value::as_str)
             && !piece.is_empty()
+            && !on_piece(piece)
         {
-            on_piece(piece);
+            return Ok(Completion::Cut);
         }
         if event.get("stop").and_then(Value::as_bool) == Some(true) {
-            return Ok(Outcome::Done);
+            return Ok(Completion::Done);
         }
     }
 }
@@ -365,7 +474,7 @@ mod tests {
     #[test]
     fn prompt_without_a_source_language_leaves_it_to_the_model() {
         assert_eq!(
-            prompt("Hello, world.", "ja", None),
+            prompt("Hello, world.", "ja", None, None),
             "<|plamo:tag|>dataset<|plamo:msg|>translation\
              <|plamo:tag|>input<|plamo:msg|>Hello, world.\
              <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja<|plamo:msg|>"
@@ -375,7 +484,7 @@ mod tests {
     #[test]
     fn prompt_with_a_source_language_names_it_on_the_input() {
         assert_eq!(
-            prompt("こんにちは", "en", Some("ja")),
+            prompt("こんにちは", "en", Some("ja"), None),
             "<|plamo:tag|>dataset<|plamo:msg|>translation\
              <|plamo:tag|>input<|plamo:key|>lang<|plamo:val|>ja<|plamo:msg|>こんにちは\
              <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>"
@@ -383,9 +492,35 @@ mod tests {
     }
 
     #[test]
+    fn prompt_puts_the_history_before_the_text_as_an_input_and_an_output() {
+        // The order and the attributes are those of the official chat_template.jinja.
+        assert_eq!(
+            prompt(
+                "二文目。",
+                "en",
+                Some("ja"),
+                Some(("一文目。", "The first."))
+            ),
+            "<|plamo:tag|>dataset<|plamo:msg|>translation\
+             <|plamo:tag|>input<|plamo:key|>lang<|plamo:val|>ja<|plamo:msg|>一文目。\
+             <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>The first.\
+             <|plamo:tag|>input<|plamo:key|>lang<|plamo:val|>ja<|plamo:msg|>二文目。\
+             <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>"
+        );
+        assert_eq!(
+            prompt("B", "ja", None, Some(("A", "あ"))),
+            "<|plamo:tag|>dataset<|plamo:msg|>translation\
+             <|plamo:tag|>input<|plamo:msg|>A\
+             <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja<|plamo:msg|>あ\
+             <|plamo:tag|>input<|plamo:msg|>B\
+             <|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja<|plamo:msg|>"
+        );
+    }
+
+    #[test]
     fn prompt_keeps_the_text_as_it_is() {
         let text = "  line one\n\nline \"two\"\t{x}\n";
-        let built = prompt(text, "ja", None);
+        let built = prompt(text, "ja", None, None);
         assert!(built.contains(&format!("<|plamo:msg|>{text}<|plamo:tag|>output")));
     }
 
@@ -432,9 +567,12 @@ mod tests {
         out
     }
 
-    fn pieces(raw: &[u8]) -> (Result<Outcome, String>, Vec<String>) {
+    fn pieces(raw: &[u8]) -> (Result<Completion, String>, Vec<String>) {
         let mut seen = Vec::new();
-        let outcome = read_response(raw, |piece| seen.push(piece.to_owned()));
+        let outcome = read_completion(raw, |piece| {
+            seen.push(piece.to_owned());
+            true
+        });
         (outcome, seen)
     }
 
@@ -447,7 +585,7 @@ mod tests {
             &chunked(EVENTS, &[20, 1, 5, 33]),
         );
         let (outcome, seen) = pieces(&raw);
-        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(outcome, Ok(Completion::Done));
         assert_eq!(seen, ["こんにちは、", "世界", "。"]);
     }
 
@@ -455,7 +593,7 @@ mod tests {
     fn a_stream_without_chunking_is_read_too() {
         let raw = response("200 OK", "Connection: close\r\n", EVENTS.as_bytes());
         let (outcome, seen) = pieces(&raw);
-        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(outcome, Ok(Completion::Done));
         assert_eq!(seen.concat(), "こんにちは、世界。");
     }
 
@@ -484,7 +622,7 @@ mod tests {
         let (outcome, seen) = pieces(&raw);
         assert_eq!(
             outcome,
-            Err("the engine refused the translation (HTTP 401): Invalid API Key".into())
+            Err("the engine refused the translation (HTTP 401: Invalid API Key)".into())
         );
         assert!(seen.is_empty());
     }
@@ -544,9 +682,10 @@ mod tests {
         let (port, engine) = fake_engine(raw, false);
         let mut seen = String::new();
         let outcome = stream(port, "k3y", "PROMPT", &Cancel::default(), |piece| {
-            seen.push_str(piece)
+            seen.push_str(piece);
+            true
         });
-        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(outcome, Ok(Completion::Done));
         assert_eq!(seen, "こんにちは、世界。");
         let request = engine.join().unwrap();
         assert!(
@@ -581,8 +720,11 @@ mod tests {
         });
         let started = Instant::now();
         let mut seen = Vec::new();
-        let outcome = stream(port, "k", "P", &cancel, |piece| seen.push(piece.to_owned()));
-        assert_eq!(outcome, Ok(Outcome::Stopped));
+        let outcome = stream(port, "k", "P", &cancel, |piece| {
+            seen.push(piece.to_owned());
+            true
+        });
+        assert_eq!(outcome, Ok(Completion::Stopped));
         assert_eq!(seen, ["途中"]);
         assert!(started.elapsed() < Duration::from_secs(2));
         // The engine sees the connection close, which is what makes llama-server cancel.
@@ -597,7 +739,65 @@ mod tests {
         let cancel = translator.begin();
         translator.stop();
         let outcome = stream(port, "k", "P", &cancel, |_| panic!("no piece expected"));
-        assert_eq!(outcome, Ok(Outcome::Stopped));
+        assert_eq!(outcome, Ok(Completion::Stopped));
+    }
+
+    #[test]
+    fn a_cut_ends_the_request_and_closes_its_connection() {
+        let first = "data: {\"content\":\"同じ\",\"stop\":false}\n\n";
+        let raw = response(
+            "200 OK",
+            "Transfer-Encoding: chunked\r\n",
+            format!("{:x}\r\n{first}\r\n", first.len()).as_bytes(),
+        );
+        let (port, engine) = fake_engine(raw, true);
+        let translator = Translator::default();
+        let cancel = translator.begin();
+        let outcome = stream(port, "k", "P", &cancel, |_| false);
+        assert_eq!(outcome, Ok(Completion::Cut));
+        // Returns only once the connection is closed, which makes llama-server cancel; without the
+        // close this would hang.
+        engine.join().unwrap();
+        // The translation itself goes on: the next request is sent.
+        assert!(!cancel.is_stopped());
+    }
+
+    #[test]
+    fn tokens_counts_what_the_engine_answers() {
+        let body = r#"{"tokens":[1,2,3,4]}"#;
+        let raw = response(
+            "200 OK",
+            &format!("Content-Length: {}\r\n", body.len()),
+            body.as_bytes(),
+        );
+        let (port, engine) = fake_engine(raw, false);
+        assert_eq!(tokens(port, "k3y", "こんにちは"), Ok(4));
+        let request = engine.join().unwrap();
+        assert!(
+            request.starts_with("POST /tokenize HTTP/1.1\r\n"),
+            "{request}"
+        );
+        assert!(
+            request.contains("\r\nAuthorization: Bearer k3y\r\n"),
+            "{request}"
+        );
+        let body: Value = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(body, json!({ "content": "こんにちは" }));
+    }
+
+    #[test]
+    fn tokens_reports_a_refusal() {
+        let body = r#"{"error":{"message":"Invalid API Key"}}"#;
+        let raw = response(
+            "401 Unauthorized",
+            &format!("Content-Length: {}\r\n", body.len()),
+            body.as_bytes(),
+        );
+        let (port, _engine) = fake_engine(raw, false);
+        assert_eq!(
+            tokens(port, "k", "x"),
+            Err("the engine refused to count the tokens (HTTP 401: Invalid API Key)".into())
+        );
     }
 
     #[test]
