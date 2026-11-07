@@ -1,10 +1,10 @@
 ---
 id: TASK-6
 title: 2 ペインのメイン画面を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-06 23:09'
+updated_date: '2026-11-07 00:22'
 labels: []
 milestone: m-1
 dependencies:
