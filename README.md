@@ -7,6 +7,8 @@ PLaMo 3 Translate をローカルで動かす簡易翻訳デスクトップア�
 
 - Node.js 24 (`.node-version`) と pnpm 10 (`package.json` の `packageManager`)
 - Tauri 2 が求める Rust ツールチェーン (macOS では Xcode の Command Line Tools も)
+- Windows (x86_64) では、MSVC 向けの Rust (`x86_64-pc-windows-msvc`)、Visual Studio Build Tools の
+  「C++ によるデスクトップ開発」、WebView2 ランタイム (Windows 10 以降は通常入っている)
 
 ## 開発コマンド
 
