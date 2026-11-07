@@ -6,6 +6,10 @@
 //! translation, and asks for one through [`Engine::acquire`], which starts the engine again when it
 //! has been released.
 //!
+//! Every start gets a new random API key, and the engine answers only requests that carry it
+//! ([`Lease::api_key`]): it listens on 127.0.0.1, which a web page open in any browser on the same
+//! machine can also reach.
+//!
 //! Nothing here knows about Tauri: what the process is ([`Spawn`]) and who hears about state
 //! changes ([`Notify`]) are handed in, which is what lets the tests drive a stand-in process.
 
@@ -83,8 +87,9 @@ impl fmt::Display for AcquireError {
     }
 }
 
-/// Starts the engine process listening on 127.0.0.1 at the given port.
-pub type Spawn = Box<dyn Fn(u16) -> io::Result<Child> + Send + Sync>;
+/// Starts the engine process listening on 127.0.0.1 at the given port, accepting only requests
+/// that carry the given API key.
+pub type Spawn = Box<dyn Fn(u16, &str) -> io::Result<Child> + Send + Sync>;
 /// Hears every change of [`Status`]. Called with the engine's lock held, so it must not call back
 /// into the [`Engine`].
 pub type Notify = Box<dyn Fn(&Status) + Send + Sync>;
@@ -97,15 +102,16 @@ pub struct Engine {
 pub struct Lease {
     shared: Arc<Shared>,
     port: u16,
+    api_key: String,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "translating (TASK-9) is the first caller")
-)]
 impl Lease {
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.api_key
     }
 }
 
@@ -148,6 +154,7 @@ struct Inner {
 struct Running {
     child: Child,
     port: u16,
+    api_key: String,
 }
 
 impl Engine {
@@ -191,10 +198,6 @@ impl Engine {
 
     /// Waits until the engine is 待機中, starting it if it is 停止中, and holds it there until the
     /// lease is dropped.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "translating (TASK-9) is the first caller")
-    )]
     pub fn acquire(&self) -> Result<Lease, AcquireError> {
         let mut inner = self.shared.lock();
         let mut started = None;
@@ -204,16 +207,14 @@ impl Engine {
             }
             match inner.state {
                 EngineState::Ready => {
-                    let port = inner
-                        .process
-                        .as_ref()
-                        .map(|p| p.port)
-                        .expect("ready without a process");
+                    let running = inner.process.as_ref().expect("ready without a process");
+                    let (port, api_key) = (running.port, running.api_key.clone());
                     inner.leases += 1;
                     inner.idle_since = None;
                     return Ok(Lease {
                         shared: Arc::clone(&self.shared),
                         port,
+                        api_key,
                     });
                 }
                 EngineState::Loading => {
@@ -300,12 +301,21 @@ impl Shared {
 
     /// Spawns attempt `attempt` of the current start and the thread that waits for it to load.
     fn spawn_process(self: &Arc<Self>, inner: &mut Inner, attempt: u32) -> Result<(), String> {
-        let spawned = free_port().and_then(|port| (self.spawn)(port).map(|child| (child, port)));
-        let (child, port) = spawned.map_err(|err| format!("could not start the engine: {err}"))?;
+        let spawned = new_api_key().and_then(|api_key| {
+            let port = free_port()?;
+            let child = (self.spawn)(port, &api_key)?;
+            Ok(Running {
+                child,
+                port,
+                api_key,
+            })
+        });
+        let running = spawned.map_err(|err| format!("could not start the engine: {err}"))?;
         if let Some(pid_file) = &self.pid_file {
-            let _ = fs::write(pid_file, child.id().to_string());
+            let _ = fs::write(pid_file, running.child.id().to_string());
         }
-        inner.process = Some(Running { child, port });
+        let port = running.port;
+        inner.process = Some(running);
         inner.generation += 1;
 
         let shared = Arc::clone(self);
@@ -475,6 +485,19 @@ fn free_port() -> io::Result<u16> {
         .local_addr()?
         .port())
 }
+
+/// 32 bytes from the OS's random source, as hex: a key made per start is never stored anywhere, so
+/// nothing outside the app can learn it except by reading the process's environment.
+fn new_api_key() -> io::Result<String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|err| io::Error::other(err.to_string()))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// The environment variable llama-server reads `--api-key` from. Given through the environment
+/// rather than the arguments, because any user on the machine can list a process's arguments
+/// (`ps`), while its environment is readable only by the same user.
+pub const API_KEY_ENV: &str = "LLAMA_API_KEY";
 
 fn health(port: u16) -> bool {
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
@@ -647,7 +670,7 @@ mod tests {
             let spawns = Arc::clone(&self.spawns);
             let states = Arc::clone(&self.states);
             Engine::new(
-                Box::new(move |port| {
+                Box::new(move |port, _| {
                     if !serve_health(port, Arc::clone(&ready)) {
                         return Command::new("false").spawn();
                     }
@@ -704,6 +727,36 @@ mod tests {
         engine.start();
         wait_for(&engine, EngineState::Ready);
         assert_eq!(fake.states(), [EngineState::Loading, EngineState::Ready]);
+        engine.shutdown();
+    }
+
+    #[test]
+    fn each_start_hands_a_new_key_to_the_process_and_the_lease() {
+        let keys = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&keys);
+        let engine = Engine::new(
+            Box::new(move |port, key: &str| {
+                seen.lock().unwrap().push(key.to_owned());
+                if !serve_health(port, Arc::new(AtomicBool::new(true))) {
+                    return Command::new("false").spawn();
+                }
+                Command::new("sleep").arg("60").spawn()
+            }),
+            Box::new(|_| {}),
+            None,
+        );
+        engine.set_idle_release(Some(Duration::from_millis(100)));
+        let last_key = || keys.lock().unwrap().last().cloned().unwrap();
+        // Compared with the last key handed out, since a port lost to the race START_ATTEMPTS
+        // covers adds an attempt of its own.
+        let first = engine.acquire().unwrap().api_key().to_owned();
+        assert_eq!(first, last_key());
+        wait_for(&engine, EngineState::Stopped);
+        let second = engine.acquire().unwrap().api_key().to_owned();
+        assert_eq!(second, last_key());
+        assert_ne!(first, second);
+        assert_eq!(first.len(), 64);
+        assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
         engine.shutdown();
     }
 
@@ -785,7 +838,7 @@ mod tests {
         let heard = Arc::clone(&states);
         let ready = Arc::new(AtomicBool::new(true));
         let engine = Engine::new(
-            Box::new(move |port| {
+            Box::new(move |port, _| {
                 let mut seen = seen.lock().unwrap();
                 seen.push(port);
                 if seen.len() == 1 || !serve_health(port, Arc::clone(&ready)) {
@@ -813,7 +866,7 @@ mod tests {
     fn the_supervisor_leaves_an_exit_while_loading_to_the_loader() {
         let ready = Arc::new(AtomicBool::new(false));
         let engine = Engine::new(
-            Box::new(move |port| {
+            Box::new(move |port, _| {
                 serve_health(port, Arc::clone(&ready));
                 Command::new("false").spawn()
             }),
@@ -853,7 +906,7 @@ mod tests {
     #[test]
     fn a_failed_spawn_is_reported() {
         let engine = Engine::new(
-            Box::new(|_| {
+            Box::new(|_, _| {
                 Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     "no GGUF in /models",
@@ -877,7 +930,7 @@ mod tests {
     #[test]
     fn an_engine_that_exits_while_loading_is_reported() {
         let engine = Engine::new(
-            Box::new(|_| Command::new("false").spawn()),
+            Box::new(|_, _| Command::new("false").spawn()),
             Box::new(|_| {}),
             None,
         );

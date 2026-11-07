@@ -50,12 +50,13 @@ fn start_engine(app: &AppHandle) -> Result<Engine, Box<dyn std::error::Error>> {
 
     engine::kill_leftover(&pid_file, &program);
 
-    let spawn: engine::Spawn = Box::new(move |port| {
+    let spawn: engine::Spawn = Box::new(move |port, api_key| {
         let model = engine::choose_model(&model_dir)?;
         // Truncated on every start: the log is for looking into the run that just went wrong.
         let log = File::create(log_dir.join("llama-server.log"))?;
         engine::windowless(&program)
             .args(engine::server_args(&model, port))
+            .env(engine::API_KEY_ENV, api_key)
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)
