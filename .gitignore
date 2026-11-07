@@ -7,3 +7,6 @@ node_modules/
 src-tauri/target/
 # Tauri regenerates the capability schemas on every build.
 src-tauri/gen/
+
+# Built by scripts/build-llama-server.sh; the sidecar is not tracked.
+src-tauri/binaries/
