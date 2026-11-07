@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import Icon from "../icons/Icon.svelte";
   import { announce } from "./announce";
   import IconButton from "./IconButton.svelte";
@@ -17,19 +18,44 @@
   let focused = false;
   /** Where the focus was before it entered the toast, to return it there when the toast is closed. */
   let before: HTMLElement | null = null;
+  /**
+   * Set while focus moves from a replaced toast to its successor, so the focus events of that move
+   * neither restart the timer nor overwrite `before`.
+   */
+  let handingOver = false;
+  let region: HTMLElement;
 
   const bodyId = $props.id();
 
-  /** Shows `body` as the result of the operation just done. Takes no focus; the words are read politely. */
-  export function show(body: string) {
+  /**
+   * Shows `body` as the result of the operation just done. Takes no focus; the words are read
+   * politely. When the focus is inside the toast being replaced, it moves to the new toast's close
+   * button, which then still returns it to where it was before the first toast (doc-9 §6.5) —
+   * otherwise the focus would vanish with the removed button.
+   */
+  export async function show(body: string) {
     stopTimer();
+    const keepFocus = focused && toast !== null && !toast.leaving;
     hovered = false;
-    focused = false;
-    before = null;
+    if (!keepFocus) {
+      focused = false;
+      before = null;
+    }
+    handingOver = keepFocus;
     toast = { id: ++count, body, leaving: false };
     remaining = toastDuration(body, tokenMs("--snz-motion-toast-min", 1800), tokenMs("--snz-motion-toast-max", 6000));
     announce(body);
-    run();
+    if (!keepFocus) {
+      run();
+      return;
+    }
+    await tick();
+    region.querySelector<HTMLElement>(".close button")?.focus();
+    handingOver = false;
+    if (!region.contains(document.activeElement)) {
+      focused = false;
+      run();
+    }
   }
 
   function stopTimer() {
@@ -87,7 +113,7 @@
   }
 
   function onfocusin(event: FocusEvent) {
-    if (!focused) {
+    if (!focused && !handingOver) {
       before = event.relatedTarget instanceof HTMLElement ? event.relatedTarget : null;
     }
     focused = true;
@@ -95,6 +121,9 @@
   }
 
   function onfocusout(event: FocusEvent) {
+    if (handingOver) {
+      return;
+    }
     if (event.currentTarget instanceof Node && event.currentTarget.contains(event.relatedTarget as Node | null)) {
       return;
     }
@@ -103,7 +132,7 @@
   }
 </script>
 
-<div class="region">
+<div class="region" bind:this={region}>
   {#if toast !== null}
     {#key toast.id}
       <div
