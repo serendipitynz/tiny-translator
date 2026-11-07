@@ -1,10 +1,10 @@
 ---
 id: TASK-9
 title: ストリーミング翻訳と停止を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-07 05:25'
+updated_date: '2026-11-07 06:12'
 labels: []
 milestone: m-2
 dependencies:
@@ -23,8 +23,8 @@ ordinal: 9000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 翻訳ボタンと Ctrl/Cmd+Enter で、PFML3 のプロンプトを /completion に渡し、訳文がストリーミングで訳文欄に出る
-- [ ] #2 翻訳中は翻訳ボタンが処理中の表示になり、停止できる
+- [x] #1 翻訳ボタンと Ctrl/Cmd+Enter で、PFML3 のプロンプトを /completion に渡し、訳文がストリーミングで訳文欄に出る
+- [x] #2 翻訳中は翻訳ボタンが処理中の表示になり、停止できる
 - [x] #3 翻訳エンジンが停止中なら起動を待ってから翻訳する
 - [x] #4 プロンプトの組み立てに単体テストがある
 - [x] #5 翻訳エンジンを起動のたびに作る乱数の API キー (--api-key) 付きで起動し、翻訳の要求にそのキーを付ける。キーの無い要求 (ブラウザのページからの要求など) は受け付けない
@@ -74,4 +74,9 @@ ordinal: 9000
 ## 確かめていないこと
 
 - AC#1・#2 を実アプリの WebView から通しで動かすこと。コンピューターを操作する手段がこのセッションに無く、ネイティブのウィンドウを操作できなかった。画面 (IPC を差し替え) と Rust 側 (実エンジン) は別々に確かめたが、実 WebView の IPC (Channel と引数名 onPiece の受け渡し) を通した動作は未確認なので、AC#1・#2 は未チェックのまま残した。pnpm tauri dev で原文を入れて翻訳・停止を一度試せば確かめられる。
+
+## マージ後の確認
+
+- AC#1・#2: オーナーが実アプリ (pnpm tauri dev) で翻訳と停止を試し、問題が無いことを確かめた (2026-11-07)。実 WebView の IPC (Channel と引数名 onPiece の受け渡し) を通した動作もこれで確認できた。
+- PR: https://github.com/serendipitynz/tiny-translator/pull/9
 <!-- SECTION:NOTES:END -->
