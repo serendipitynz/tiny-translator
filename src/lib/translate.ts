@@ -22,6 +22,14 @@ export function translate(request: TranslateRequest, onPiece: (piece: string) =>
   return invoke<Outcome>("translate", { ...request, onPiece: channel });
 }
 
+/**
+ * The source language of `text` as PLaMo's language code, `"zh"` for Chinese, or null when it is
+ * left undecided (`detect_language` in `src-tauri/src/lib.rs`, doc-1 §6.1).
+ */
+export function detectLanguage(text: string): Promise<string | null> {
+  return invoke<string | null>("detect_language", { text });
+}
+
 /** Stops the running translation, whose `translate` then resolves to "stopped". */
 export function stopTranslation(): Promise<void> {
   return invoke("stop_translation");

@@ -1,8 +1,15 @@
 <script lang="ts">
-  import { clearBlocker, copyBlocker, stopBlocker, translateBlocker } from "./lib/blockers";
-  import { AUTO, promptLanguages, SOURCE_OPTIONS, TARGET_OPTIONS } from "./lib/languages";
+  import { clearBlocker, copyBlocker, stopBlocker, swapBlocker, translateBlocker } from "./lib/blockers";
+  import {
+    AUTO,
+    DEFAULT_PRIORITIES,
+    detectionLabel,
+    promptLanguages,
+    SOURCE_OPTIONS,
+    TARGET_OPTIONS,
+  } from "./lib/languages";
   import { isTranslateShortcut } from "./lib/shortcuts";
-  import { stopTranslation, translate as translateText } from "./lib/translate";
+  import { detectLanguage, stopTranslation, translate as translateText } from "./lib/translate";
   import { announce } from "./lib/ui/announce";
   import Button from "./lib/ui/Button.svelte";
   import IconButton from "./lib/ui/IconButton.svelte";
@@ -19,14 +26,56 @@
   let failure = $state<string | null>(null);
   /** Counts translations, so pieces and results of one that was stopped no longer reach the screen. */
   let current = 0;
+  /**
+   * The source language detected last (null for doc-1 §6.1's 判定なし), or null before the first
+   * detection: shown only once there is one, so typing the first letters does not flash 「判定: 不明」.
+   */
+  let detection = $state<{ language: string | null } | null>(null);
+  /** Counts detections, so an answer that arrives after a newer one was asked for is dropped. */
+  let detecting = 0;
+
+  // Long enough that a word typed at speed is detected once, short enough to read as immediate.
+  const DETECT_DELAY_MS = 200;
+
+  $effect(() => {
+    const text = source;
+    if (sourceLanguage !== AUTO || text.trim() === "") {
+      return;
+    }
+    const id = ++detecting;
+    const timer = setTimeout(async () => {
+      try {
+        const language = await detectLanguage(text);
+        if (id === detecting) {
+          detection = { language };
+        }
+      } catch {
+        // The label keeps the last answer; translating detects again and reports its own failure.
+      }
+    }, DETECT_DELAY_MS);
+    return () => clearTimeout(timer);
+  });
 
   async function translate() {
     const id = ++current;
     translating = true;
     failure = null;
     target = "";
+    const text = source;
+    const sourceSelected = sourceLanguage;
+    const targetSelected = targetLanguage;
     try {
-      const request = { text: source, ...promptLanguages(sourceLanguage, targetLanguage) };
+      // Detected again from the text being translated, not taken from the label, whose detection
+      // may still be waiting out its delay.
+      const detected = sourceSelected === AUTO ? await detectLanguage(text) : null;
+      if (id !== current) {
+        return;
+      }
+      if (sourceSelected === AUTO) {
+        ++detecting;
+        detection = { language: detected };
+      }
+      const request = { text, ...promptLanguages(sourceSelected, targetSelected, detected, DEFAULT_PRIORITIES) };
       await translateText(request, (piece) => {
         if (id === current) {
           target += piece;
@@ -71,9 +120,16 @@
     void translate();
   }
 
-  // Each action below is where a later task connects its work — swapping the direction (TASK-10),
-  // paste, copy and clear (TASK-11), history (TASK-20) and settings (TASK-21).
-  function swap() {}
+  // doc-1 §6.2: the selectors trade values as they are, 自動 for 自動, and the translation becomes
+  // the source.
+  function swap() {
+    [sourceLanguage, targetLanguage] = [targetLanguage, sourceLanguage];
+    [source, target] = [target, source];
+    announce("翻訳元と翻訳先を入れ替えました");
+  }
+
+  // Each action below is where a later task connects its work — paste, copy and clear (TASK-11),
+  // history (TASK-20) and settings (TASK-21).
   function paste() {}
   function copySource() {}
   function copyTarget() {}
@@ -97,7 +153,12 @@
     <div class="directions">
       <div class="source-direction">
         <Select label="翻訳元" options={SOURCE_OPTIONS} bind:value={sourceLanguage} />
-        <IconButton icon="arrow-left-right" label="翻訳元と翻訳先を入れ替える" onpress={swap} />
+        <IconButton
+          icon="arrow-left-right"
+          label="翻訳元と翻訳先を入れ替える"
+          disabledReason={swapBlocker(translating)}
+          onpress={swap}
+        />
       </div>
       <Select label="翻訳先" options={TARGET_OPTIONS} bind:value={targetLanguage} />
     </div>
@@ -110,7 +171,12 @@
           <IconButton icon="x" label="原文をクリア" disabledReason={clearBlocker(source)} onpress={clearSource} />
         {/snippet}
         {#snippet children(headingId)}
-          <TextArea bind:value={source} labelledby={headingId} placeholder="翻訳する文を入力" />
+          <div class="source-field">
+            <TextArea bind:value={source} labelledby={headingId} placeholder="翻訳する文を入力" />
+            {#if sourceLanguage === AUTO && source.trim() !== "" && detection !== null}
+              <p class="detection">{detectionLabel(detection.language)}</p>
+            {/if}
+          </div>
         {/snippet}
       </Panel>
       <Panel heading="訳文">
@@ -207,6 +273,21 @@
     justify-content: space-between;
     gap: var(--snz-space-sm);
     min-inline-size: 0;
+  }
+
+  // doc-1 §8.1: what the app made of the source sits under it, inside the pane.
+  .source-field {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    min-block-size: 0;
+  }
+
+  .detection {
+    margin: 0;
+    padding: var(--snz-space-xs) var(--snz-space-md);
+    font-size: var(--snz-font-size-small);
+    color: var(--snz-fg-muted);
+    border-block-start: var(--snz-border-line) solid var(--snz-line-divider);
   }
 
   .actions {

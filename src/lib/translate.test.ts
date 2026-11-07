@@ -10,11 +10,14 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
   invoke: async (command: string, args: unknown) => {
     tauri.calls.push({ command, args });
-    return command === "translate" ? "done" : undefined;
+    if (command === "translate") {
+      return "done";
+    }
+    return command === "detect_language" ? "en" : undefined;
   },
 }));
 
-const { translate, stopTranslation } = await import("./translate");
+const { detectLanguage, translate, stopTranslation } = await import("./translate");
 
 describe("translate", () => {
   it("passes the request and a channel that delivers each piece", async () => {
@@ -34,5 +37,11 @@ describe("translate", () => {
     tauri.calls = [];
     await stopTranslation();
     expect(tauri.calls).toEqual([{ command: "stop_translation", args: undefined }]);
+  });
+
+  it("detects the source language through its own command", async () => {
+    tauri.calls = [];
+    expect(await detectLanguage("Hello, world")).toBe("en");
+    expect(tauri.calls).toEqual([{ command: "detect_language", args: { text: "Hello, world" } }]);
   });
 });

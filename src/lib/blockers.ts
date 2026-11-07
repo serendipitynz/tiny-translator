@@ -16,3 +16,7 @@ export function clearBlocker(source: string): string | null {
 export function stopBlocker(translating: boolean): string | null {
   return translating ? null : "翻訳していないので停止できません";
 }
+
+export function swapBlocker(translating: boolean): string | null {
+  return translating ? "翻訳中は入れ替えられません" : null;
+}
