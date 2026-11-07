@@ -172,10 +172,11 @@ pub fn fit<E>(
     let mut chunks: Vec<Piece> = Vec::new();
     for piece in pieces {
         match chunks.last_mut() {
-            // One token more for the whitespace that joins them.
-            Some(chunk) if chunk.tokens + 1 + piece.tokens <= max => {
+            // The whitespace that joins them counts at its length in bytes, which no token count
+            // exceeds: a long run of it, such as a wide indent, must not fit by being counted as one.
+            Some(chunk) if chunk.tokens + (piece.start - chunk.end) + piece.tokens <= max => {
+                chunk.tokens += (piece.start - chunk.end) + piece.tokens;
                 chunk.end = piece.end;
-                chunk.tokens += 1 + piece.tokens;
             }
             _ => chunks.push(piece),
         }
@@ -428,6 +429,17 @@ mod tests {
             fit(text, 13, characters).unwrap(),
             [("One a. Two b.", " "), ("Six c. End.", "")]
         );
+    }
+
+    #[test]
+    fn the_whitespace_between_sentences_counts_when_they_are_joined() {
+        // Joined, the two sentences and the spaces between them would be 24 tokens.
+        let text = format!("One a.{}Two b.", " ".repeat(12));
+        assert_eq!(
+            fit(&text, 20, characters).unwrap(),
+            [("One a.", &" ".repeat(12)[..]), ("Two b.", "")]
+        );
+        assert_eq!(fit(&text, 24, characters).unwrap(), [(&text[..], "")]);
     }
 
     #[test]
