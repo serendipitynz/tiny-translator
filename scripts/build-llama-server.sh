@@ -22,8 +22,10 @@ work="${XDG_CACHE_HOME:-$HOME/.cache}/tiny-translator/llama.cpp-$tag"
 case "$triple" in
   aarch64-apple-darwin) ;;
   *)
-    # The Windows Vulkan build (doc-1 §4.2) belongs to TASK-12.
     echo "build-llama-server.sh: no build defined for $triple" >&2
+    case "$triple" in
+      *-windows-*) echo "on Windows, run scripts/build-llama-server.ps1 (the Vulkan build, doc-1 §4.2)" >&2 ;;
+    esac
     exit 1
     ;;
 esac
