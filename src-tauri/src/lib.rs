@@ -1,4 +1,5 @@
 mod engine;
+mod language;
 mod translate;
 
 use std::fs::{self, File};
@@ -23,6 +24,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             engine_state,
+            detect_language,
             translate,
             stop_translation
         ])
@@ -43,6 +45,13 @@ fn status_payload(status: &Status) -> (&'static str, Option<String>) {
 #[tauri::command]
 fn engine_state(engine: State<'_, Engine>) -> (&'static str, Option<String>) {
     status_payload(&engine.status())
+}
+
+/// The source language of `text` as PLaMo's language code, `"zh"` for Chinese, or `None` when the
+/// app leaves it undecided (doc-1 §6.1).
+#[tauri::command]
+fn detect_language(text: String) -> Option<&'static str> {
+    language::detect(&text)
 }
 
 /// Translates `text` into `target`, sending the translation to `on_piece` as it is generated, and
