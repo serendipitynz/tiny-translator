@@ -1,7 +1,10 @@
 mod clipboard;
+mod document;
 mod engine;
 mod language;
+mod repetition;
 mod translate;
+mod units;
 
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -89,16 +92,17 @@ fn detect_language(text: String) -> Option<&'static str> {
     language::detect(&text)
 }
 
-/// Translates `text` into `target`, sending the translation to `on_piece` as it is generated, and
-/// answers `"done"` or `"stopped"`. Waits for the engine to start when it is 停止中, and keeps it from
-/// being released until the translation ends.
+/// Translates `text` into `target` 翻訳単位 by 翻訳単位 (doc-1 §7.3), and answers `"done"` or
+/// `"stopped"`. The translation goes to `on_update` as it is generated, as `["append", text]` to add
+/// at the end or `["replace", text]` for the whole translation so far. Waits for the engine to
+/// start when it is 停止中, and keeps it from being released until the translation ends.
 #[tauri::command]
 async fn translate(
     app: AppHandle,
     text: String,
     target: String,
     source: Option<String>,
-    on_piece: Channel<String>,
+    on_update: Channel<(&'static str, String)>,
 ) -> Result<&'static str, String> {
     // Registered before anything waits, so a stop pressed while the engine is still loading
     // already reaches this translation.
@@ -111,9 +115,17 @@ async fn translate(
             .acquire()
             .map_err(|err| err.to_string());
         let outcome = result.and_then(|lease| {
-            let prompt = translate::prompt(&text, &target, source.as_deref());
-            translate::stream(lease.port(), lease.api_key(), &prompt, &cancel, |piece| {
-                let _ = on_piece.send(piece.to_owned());
+            let mut model = translate::EngineModel {
+                port: lease.port(),
+                api_key: lease.api_key(),
+                cancel: &cancel,
+            };
+            document::translate_text(&mut model, &text, &target, source.as_deref(), |update| {
+                let message = match update {
+                    document::Update::Append(text) => ("append", text.to_owned()),
+                    document::Update::Replace(text) => ("replace", text.to_owned()),
+                };
+                let _ = on_update.send(message);
             })
         });
         app.state::<Translator>().end(&cancel);

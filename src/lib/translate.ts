@@ -11,15 +11,24 @@ export interface TranslateRequest {
   source: string | null;
 }
 
+/** A change to the translation: text to add at the end, or the whole translation so far. */
+type Update = ["append" | "replace", string];
+
 /**
- * Translates through the engine (`translate` in `src-tauri/src/lib.rs`), handing each piece of the
- * translation to `onPiece` as it is generated. Waits for the engine to start when it is stopped.
- * Rejects with the engine's reason when the translation cannot be made.
+ * Translates through the engine (`translate` in `src-tauri/src/lib.rs`) 翻訳単位 by 翻訳単位,
+ * handing the whole translation so far to `onText` each time it grows — or shrinks, when the
+ * translation of a 翻訳単位 that started repeating itself is taken back (doc-1 §7.3). Waits for the
+ * engine to start when it is stopped. Rejects with the engine's reason when the translation cannot
+ * be made.
  */
-export function translate(request: TranslateRequest, onPiece: (piece: string) => void): Promise<Outcome> {
-  const channel = new Channel<string>();
-  channel.onmessage = onPiece;
-  return invoke<Outcome>("translate", { ...request, onPiece: channel });
+export function translate(request: TranslateRequest, onText: (text: string) => void): Promise<Outcome> {
+  let text = "";
+  const channel = new Channel<Update>();
+  channel.onmessage = ([kind, part]) => {
+    text = kind === "append" ? text + part : part;
+    onText(text);
+  };
+  return invoke<Outcome>("translate", { ...request, onUpdate: channel });
 }
 
 /**

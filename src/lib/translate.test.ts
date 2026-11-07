@@ -20,17 +20,28 @@ vi.mock("@tauri-apps/api/core", () => ({
 const { detectLanguage, translate, stopTranslation } = await import("./translate");
 
 describe("translate", () => {
-  it("passes the request and a channel that delivers each piece", async () => {
+  it("passes the request and a channel whose updates build up the translation", async () => {
     tauri.calls = [];
-    const pieces: string[] = [];
-    const outcome = await translate({ text: "Hello", target: "ja", source: null }, (piece) => pieces.push(piece));
+    const texts: string[] = [];
+    const outcome = await translate({ text: "Hello", target: "ja", source: null }, (text) => texts.push(text));
     expect(outcome).toBe("done");
     const [call] = tauri.calls;
     expect(call.command).toBe("translate");
-    const { onPiece, ...request } = call.args as { onPiece: { onmessage: (m: string) => void } };
+    const { onUpdate, ...request } = call.args as { onUpdate: { onmessage: (m: [string, string]) => void } };
     expect(request).toEqual({ text: "Hello", target: "ja", source: null });
-    onPiece.onmessage("こんにちは");
-    expect(pieces).toEqual(["こんにちは"]);
+    onUpdate.onmessage(["append", "こんにちは"]);
+    onUpdate.onmessage(["append", "。\n\n"]);
+    onUpdate.onmessage(["append", "繰り返し繰り返し"]);
+    // The repetition is taken back to where its 翻訳単位 began, and the translation goes on.
+    onUpdate.onmessage(["replace", "こんにちは。\n\n"]);
+    onUpdate.onmessage(["append", "世界。"]);
+    expect(texts).toEqual([
+      "こんにちは",
+      "こんにちは。\n\n",
+      "こんにちは。\n\n繰り返し繰り返し",
+      "こんにちは。\n\n",
+      "こんにちは。\n\n世界。",
+    ]);
   });
 
   it("stops through its own command", async () => {
