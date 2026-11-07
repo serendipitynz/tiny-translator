@@ -17,7 +17,8 @@ export type IconName =
   | "copy"
   | "x"
   | "arrow-left-right"
-  | "chevron-down";
+  | "chevron-down"
+  | "circle-check";
 
 export type IconNode = readonly (readonly ["path" | "rect" | "circle", Readonly<Record<string, string>>])[];
 
@@ -67,4 +68,8 @@ export const ICONS: Readonly<Record<IconName, IconNode>> = {
     ["path", { d: "M20 17H4" }],
   ],
   "chevron-down": [["path", { d: "m6 9 6 6 6-6" }]],
+  "circle-check": [
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "m9 12 2 2 4-4" }],
+  ],
 };
