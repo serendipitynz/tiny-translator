@@ -15,7 +15,9 @@ commit=cd959bae9
 root=$(cd "$(dirname "$0")/.." && pwd)
 triple=$(rustc -vV | sed -n 's/^host: //p')
 out="$root/src-tauri/binaries/llama-server-$triple"
-work="$root/src-tauri/target/llama.cpp-$tag"
+# Outside the repository: llama.cpp carries its own Svelte UI, which svelte-check and other
+# workspace-wide tools would otherwise find and try to load.
+work="${XDG_CACHE_HOME:-$HOME/.cache}/tiny-translator/llama.cpp-$tag"
 
 case "$triple" in
   aarch64-apple-darwin) ;;

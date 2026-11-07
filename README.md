@@ -13,7 +13,7 @@ PLaMo 3 Translate をローカルで動かす簡易翻訳デスクトップア�
 ## 翻訳エンジンとモデル
 
 翻訳エンジン (llama-server) は Tauri の sidecar で、リポジトリには含めない。初めてビルドする前に、リポジトリのルートで
-次を実行して `src-tauri/binaries/` へ作る (llama.cpp を取得して静的にビルドする。CMake が要る)。これが無いと `cargo` の
+次を実行して `src-tauri/binaries/` へ作る (llama.cpp を `~/.cache/tiny-translator/` へ取得して静的にビルドする。CMake が要る)。これが無いと `cargo` の
 ビルド・テスト・clippy も失敗する。今のところ macOS (Apple Silicon) だけに対応している。
 
 ```sh
