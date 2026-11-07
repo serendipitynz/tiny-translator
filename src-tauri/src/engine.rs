@@ -240,8 +240,9 @@ impl Engine {
     }
 
     /// Changes 自動解放までの時間; `None` never releases. Takes effect on the running engine too.
+    // The same condition as the tests' module: they are its only caller, and they run on Unix only.
     #[cfg_attr(
-        not(test),
+        not(all(test, unix)),
         expect(
             dead_code,
             reason = "the settings screen (TASK-21) is the first caller"
