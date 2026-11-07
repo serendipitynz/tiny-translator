@@ -85,9 +85,9 @@
         detection = { language: detected };
       }
       const request = { text, ...promptLanguages(sourceSelected, targetSelected, detected, DEFAULT_PRIORITIES) };
-      await translateText(request, (piece) => {
+      await translateText(request, (text) => {
         if (id === current) {
-          target += piece;
+          target = text;
         }
       });
     } catch (error) {
