@@ -1,6 +1,9 @@
 <script lang="ts">
-  import { clearBlocker, copyBlocker, translateBlocker } from "./lib/blockers";
-  import { AUTO, SOURCE_OPTIONS, TARGET_OPTIONS } from "./lib/languages";
+  import { clearBlocker, copyBlocker, stopBlocker, translateBlocker } from "./lib/blockers";
+  import { AUTO, promptLanguages, SOURCE_OPTIONS, TARGET_OPTIONS } from "./lib/languages";
+  import { isTranslateShortcut } from "./lib/shortcuts";
+  import { stopTranslation, translate as translateText } from "./lib/translate";
+  import { announce } from "./lib/ui/announce";
   import Button from "./lib/ui/Button.svelte";
   import IconButton from "./lib/ui/IconButton.svelte";
   import Panel from "./lib/ui/Panel.svelte";
@@ -12,11 +15,64 @@
   let sourceLanguage = $state(AUTO);
   let targetLanguage = $state(AUTO);
   let translating = $state(false);
+  /** Why the last translation could not be made, shown until the next one starts. */
+  let failure = $state<string | null>(null);
+  /** Counts translations, so pieces and results of one that was stopped no longer reach the screen. */
+  let current = 0;
 
-  // The screen only: each action below is where a later task connects its work — translating and
-  // stopping (TASK-9), swapping the direction (TASK-10), paste, copy and clear (TASK-11), history
-  // (TASK-20) and settings (TASK-21).
-  function translate() {}
+  async function translate() {
+    const id = ++current;
+    translating = true;
+    failure = null;
+    target = "";
+    try {
+      const request = { text: source, ...promptLanguages(sourceLanguage, targetLanguage) };
+      await translateText(request, (piece) => {
+        if (id === current) {
+          target += piece;
+        }
+      });
+    } catch (error) {
+      if (id === current) {
+        // The busy display goes first, then the failure is told (snz-design doc-8 §5.8).
+        translating = false;
+        failure = `翻訳できませんでした: ${error}`;
+        announce(failure);
+      }
+    } finally {
+      if (id === current) {
+        translating = false;
+      }
+    }
+  }
+
+  // The screen is back at rest at once, even while the engine is still loading: the translation
+  // that was waiting for it sees the stop and sends nothing.
+  function stop() {
+    current += 1;
+    translating = false;
+    void stopTranslation();
+    announce("翻訳を停止しました");
+  }
+
+  function onKeydown(event: KeyboardEvent) {
+    if (!isTranslateShortcut(event)) {
+      return;
+    }
+    event.preventDefault();
+    if (translating) {
+      return;
+    }
+    const reason = translateBlocker(source);
+    if (reason !== null) {
+      announce(reason);
+      return;
+    }
+    void translate();
+  }
+
+  // Each action below is where a later task connects its work — swapping the direction (TASK-10),
+  // paste, copy and clear (TASK-11), history (TASK-20) and settings (TASK-21).
   function swap() {}
   function paste() {}
   function copySource() {}
@@ -25,6 +81,8 @@
   function openHistory() {}
   function openSettings() {}
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <div class="screen">
   <header class="app-header">
@@ -66,6 +124,10 @@
     </div>
 
     <div class="actions">
+      {#if failure !== null}
+        <p class="failure">{failure}</p>
+      {/if}
+      <Button label="停止" disabledReason={stopBlocker(translating)} onpress={stop} />
       <Button
         label="翻訳"
         busyLabel="翻訳中…"
@@ -149,7 +211,18 @@
 
   .actions {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
+    gap: var(--snz-space-sm);
+  }
+
+  // Told in words, not colour alone (snz-design doc-8 §5.8); the buttons keep their place at the end.
+  .failure {
+    flex: 1;
+    min-inline-size: 0;
+    margin: 0;
+    color: var(--snz-danger);
+    overflow-wrap: anywhere;
   }
 
   // doc-1 §8.1: on a narrow window the source and the translation stack.
