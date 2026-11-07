@@ -412,6 +412,20 @@ fn load(shared: &Arc<Shared>, generation: u64, port: u16, attempt: u32) {
     }
 }
 
+/// Records that a 待機中 engine exited on its own. One that exits while loading is left to its
+/// loader, which may start it again ([`START_ATTEMPTS`]); stopping it here would end the start
+/// with the retries unused.
+fn stop_if_exited(shared: &Shared, inner: &mut Inner) -> bool {
+    if inner.state != EngineState::Ready {
+        return false;
+    }
+    let Some(reason) = inner.exited() else {
+        return false;
+    };
+    shared.stop(inner, Some(reason));
+    true
+}
+
 /// Ends the engine once 自動解放までの時間 has passed with no lease, and notices one that exited.
 fn supervise(shared: &Shared) {
     let mut inner = shared.lock();
@@ -419,8 +433,7 @@ fn supervise(shared: &Shared) {
         if inner.shutting_down {
             return;
         }
-        if let Some(reason) = inner.exited() {
-            shared.stop(&mut inner, Some(reason));
+        if stop_if_exited(shared, &mut inner) {
             continue;
         }
         let now = Instant::now();
@@ -793,6 +806,47 @@ mod tests {
             [EngineState::Loading, EngineState::Ready]
         );
         drop(lease);
+        engine.shutdown();
+    }
+
+    #[test]
+    fn the_supervisor_leaves_an_exit_while_loading_to_the_loader() {
+        let ready = Arc::new(AtomicBool::new(false));
+        let engine = Engine::new(
+            Box::new(move |port| {
+                serve_health(port, Arc::clone(&ready));
+                Command::new("false").spawn()
+            }),
+            Box::new(|_| {}),
+            None,
+        );
+        engine.start();
+        // Holding the lock keeps the loader from seeing the exit first, which is the order that
+        // used to end the start without its retries.
+        let mut inner = engine.shared.lock();
+        assert_eq!(inner.state, EngineState::Loading);
+        thread::sleep(Duration::from_millis(200));
+        assert!(!stop_if_exited(&engine.shared, &mut inner));
+        assert_eq!(inner.state, EngineState::Loading);
+        assert!(inner.process.is_some());
+        drop(inner);
+        engine.shutdown();
+    }
+
+    #[test]
+    fn a_ready_engine_that_exits_is_reported_as_stopped() {
+        let fake = Fake::new();
+        let engine = fake.engine(None);
+        engine.start();
+        wait_for(&engine, EngineState::Ready);
+        let pid = engine.shared.lock().process.as_ref().unwrap().child.id();
+        Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status()
+            .unwrap();
+        wait_for(&engine, EngineState::Stopped);
+        let error = engine.status().error.unwrap();
+        assert!(error.contains("exited"), "{error}");
         engine.shutdown();
     }
 
