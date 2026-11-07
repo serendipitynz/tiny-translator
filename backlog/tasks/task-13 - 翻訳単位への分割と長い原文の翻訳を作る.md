@@ -1,10 +1,10 @@
 ---
 id: TASK-13
 title: 翻訳単位への分割と長い原文の翻訳を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-07 08:37'
+updated_date: '2026-11-07 09:57'
 labels: []
 milestone: m-3
 dependencies:
@@ -77,4 +77,9 @@ ordinal: 13000
     Buffalo の文、Markdown の表、16 進の並びでは誤検知なし。
   - `/tokenize` は API キーを要求し (無いと 401)、英語・日本語・絵文字・𠮷 などの 8 例すべてでトークン数 ≤ バイト数。
 - 測っていないこと: アプリの画面での長い原文の翻訳 (Rust の command と画面側の受け渡しは単体テストのみ)、0.8B と 8B、Windows。
+
+## レビューでの修正
+
+- [P2] 文や行をまとめ直すとき、間の空白を何文字あっても 1 トークンと数えていたので、上限を超えうる。間の空白をバイト数で数えるようにし、回帰テスト (`the_whitespace_between_sentences_counts_when_they_are_joined`) を足した。
+  これで `cargo test` は 81 件 (units は 16 件) になった。上の「80 件・units 15」はこの修正の前の数字。
 <!-- SECTION:NOTES:END -->
