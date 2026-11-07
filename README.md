@@ -10,6 +10,20 @@ PLaMo 3 Translate をローカルで動かす簡易翻訳デスクトップア�
 - Windows (x86_64) では、MSVC 向けの Rust (`x86_64-pc-windows-msvc`)、Visual Studio Build Tools の
   「C++ によるデスクトップ開発」、WebView2 ランタイム (Windows 10 以降は通常入っている)
 
+## 翻訳エンジンとモデル
+
+翻訳エンジン (llama-server) は Tauri の sidecar で、リポジトリには含めない。初めてビルドする前に、リポジトリのルートで
+次を実行して `src-tauri/binaries/` へ作る (llama.cpp を取得して静的にビルドする。CMake が要る)。これが無いと `cargo` の
+ビルド・テスト・clippy も失敗する。今のところ macOS (Apple Silicon) だけに対応している。
+
+```sh
+./scripts/build-llama-server.sh
+```
+
+モデルの GGUF (既定は `plamo-3-translate-2b-Q4_K_M.gguf`) は、アプリデータディレクトリの `models/` に置く
+(macOS では `~/Library/Application Support/com.serendipitynz.tiny-translator/models/`。シンボリックリンクでもよい)。
+翻訳エンジンのログは `~/Library/Logs/com.serendipitynz.tiny-translator/llama-server.log` に出る。
+
 ## 開発コマンド
 
 リポジトリのルートで実行する。
