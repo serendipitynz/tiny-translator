@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clearBlocker, copyBlocker, translateBlocker } from "./blockers";
+import { clearBlocker, copyBlocker, swapBlocker, translateBlocker } from "./blockers";
 
 describe("translateBlocker", () => {
   it("blocks an empty source and one of whitespace only", () => {
@@ -27,5 +27,12 @@ describe("clearBlocker", () => {
   it("blocks only a source that is already empty", () => {
     expect(clearBlocker("")).not.toBeNull();
     expect(clearBlocker(" ")).toBeNull();
+  });
+});
+
+describe("swapBlocker", () => {
+  it("blocks the swap only while translating", () => {
+    expect(swapBlocker(true)).not.toBeNull();
+    expect(swapBlocker(false)).toBeNull();
   });
 });
