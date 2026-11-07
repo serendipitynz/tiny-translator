@@ -1,3 +1,4 @@
+mod clipboard;
 mod engine;
 mod language;
 mod translate;
@@ -6,35 +7,69 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 use std::process::Stdio;
 
+use clipboard::LaunchMemory;
 use engine::{Engine, Status};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
+use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_window_state::StateFlags;
 use translate::Translator;
 
 /// Carries every change of the translation engine's state to the screen, as [`status_payload`].
 const ENGINE_STATE_EVENT: &str = "engine-state";
 
+/// Tells the screen the app was launched again while running, to do 起動時のクリップボード翻訳
+/// once more (doc-1 §5).
+const LAUNCHED_AGAIN_EVENT: &str = "launched-again";
+
 pub fn run() {
     tauri::Builder::default()
+        // First, so a second launch hands over to the running app before anything else starts.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            launched_again(app);
+        }))
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
+                .build(),
+        )
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let engine = start_engine(app.handle())?;
             app.manage(engine);
             app.manage(Translator::default());
+            let data_dir = app.path().app_data_dir()?;
+            app.manage(LaunchMemory::new(data_dir.join("launch-clipboard")));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             engine_state,
             detect_language,
             translate,
-            stop_translation
+            stop_translation,
+            launch_clipboard,
+            paste_clipboard,
+            copy_text
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if let RunEvent::Exit = event {
-                app.state::<Engine>().shutdown();
-            }
+        .run(|app, event| match event {
+            RunEvent::Exit => app.state::<Engine>().shutdown(),
+            // Opening the app from Finder, the Dock or Spotlight while it runs does not start a
+            // second process on macOS — the running one is asked to reopen instead.
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => launched_again(app),
+            _ => {}
         });
+}
+
+fn launched_again(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    let _ = app.emit(LAUNCHED_AGAIN_EVENT, ());
 }
 
 /// `[state, error]`: a pair rather than an object, so the crate needs no serde derive for it.
@@ -91,6 +126,38 @@ async fn translate(
 #[tauri::command]
 fn stop_translation(translator: State<'_, Translator>) {
     translator.stop();
+}
+
+/// What 起動時のクリップボード翻訳 found (doc-1 §6.3): `["text", text]` to translate, `["none",
+/// null]` when there is nothing new, or `["not-allowed", null]` when reading would make macOS ask
+/// the user, so the clipboard was left unread.
+#[tauri::command]
+fn launch_clipboard(app: AppHandle) -> (&'static str, Option<String>) {
+    if !clipboard::readable_without_asking() {
+        return ("not-allowed", None);
+    }
+    match app.clipboard().read_text() {
+        Ok(text) if app.state::<LaunchMemory>().take(&text) => ("text", Some(text)),
+        _ => ("none", None),
+    }
+}
+
+/// The clipboard's text for the 貼り付け button, or `None` when it holds none. Read even where
+/// macOS asks the user first (doc-1 §6.3).
+#[tauri::command]
+async fn paste_clipboard(app: AppHandle) -> Option<String> {
+    // Off the async runtime: where macOS asks, the read waits for the user's answer.
+    tauri::async_runtime::spawn_blocking(move || app.clipboard().read_text().ok())
+        .await
+        .ok()
+        .flatten()
+}
+
+#[tauri::command]
+fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
+    app.clipboard()
+        .write_text(text)
+        .map_err(|err| err.to_string())
 }
 
 /// Starts the engine at app launch, so that loading overlaps the time the user takes to bring in
