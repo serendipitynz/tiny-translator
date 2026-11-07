@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { clearBlocker, copyBlocker, stopBlocker, swapBlocker, translateBlocker } from "./lib/blockers";
   import {
     AUTO,
@@ -8,7 +9,8 @@
     SOURCE_OPTIONS,
     TARGET_OPTIONS,
   } from "./lib/languages";
-  import { isTranslateShortcut } from "./lib/shortcuts";
+  import { copyText, launchClipboard, onLaunchedAgain, pasteClipboard } from "./lib/clipboard";
+  import { isCopyTranslationShortcut, isTranslateShortcut } from "./lib/shortcuts";
   import { detectLanguage, stopTranslation, translate as translateText } from "./lib/translate";
   import { announce } from "./lib/ui/announce";
   import Button from "./lib/ui/Button.svelte";
@@ -16,14 +18,21 @@
   import Panel from "./lib/ui/Panel.svelte";
   import Select from "./lib/ui/Select.svelte";
   import TextArea from "./lib/ui/TextArea.svelte";
+  import Toast from "./lib/ui/Toast.svelte";
 
   let source = $state("");
   let target = $state("");
   let sourceLanguage = $state(AUTO);
   let targetLanguage = $state(AUTO);
   let translating = $state(false);
-  /** Why the last translation could not be made, shown until the next one starts. */
+  /** Why the last translation, paste or copy could not be made, shown until the next one starts. */
   let failure = $state<string | null>(null);
+  /**
+   * Whether 起動時のクリップボード翻訳 left the clipboard unread because macOS would have asked the
+   * user (doc-1 §6.3); the empty source pane then says how to let the app read it.
+   */
+  let launchUnread = $state(false);
+  let toast: Toast;
   /** Counts translations, so pieces and results of one that was stopped no longer reach the screen. */
   let current = 0;
   /**
@@ -104,7 +113,38 @@
     announce("翻訳を停止しました");
   }
 
+  // doc-1 §6.3, at launch and at every launch after it while the app runs (§5).
+  async function translateClipboard() {
+    let found: Awaited<ReturnType<typeof launchClipboard>>;
+    try {
+      found = await launchClipboard();
+    } catch {
+      // Nothing was asked for; the user brings the text in another way.
+      return;
+    }
+    launchUnread = found.kind === "not-allowed";
+    if (found.kind === "text") {
+      source = found.text;
+      void translate();
+    }
+  }
+
+  onMount(() => {
+    void translateClipboard();
+    return onLaunchedAgain(() => void translateClipboard());
+  });
+
   function onKeydown(event: KeyboardEvent) {
+    if (isCopyTranslationShortcut(event)) {
+      event.preventDefault();
+      const reason = copyBlocker(target, "訳文");
+      if (reason !== null) {
+        announce(reason);
+        return;
+      }
+      void copyTarget();
+      return;
+    }
     if (!isTranslateShortcut(event)) {
       return;
     }
@@ -128,12 +168,40 @@
     announce("翻訳元と翻訳先を入れ替えました");
   }
 
-  // Each action below is where a later task connects its work — paste, copy and clear (TASK-11),
-  // history (TASK-20) and settings (TASK-21).
-  function paste() {}
-  function copySource() {}
-  function copyTarget() {}
-  function clearSource() {}
+  // Replaces the source without translating it (2026-11-07 owner decision): the user may still
+  // want to edit it or pick the languages first.
+  async function paste() {
+    const text = await pasteClipboard().catch(() => null);
+    if (text === null || text === "") {
+      failure = "クリップボードに貼り付けられる文字列がありません";
+      announce(failure);
+      return;
+    }
+    failure = null;
+    source = text;
+  }
+
+  async function copy(text: string, what: "原文" | "訳文") {
+    try {
+      await copyText(text);
+    } catch (error) {
+      // A failure is a situation, not the operation's result: told where failures are, not in a toast (doc-9 §6.5).
+      failure = `${what}をコピーできませんでした: ${error}`;
+      announce(failure);
+      return;
+    }
+    toast.show(`${what}をコピーしました`);
+  }
+
+  const copySource = () => copy(source, "原文");
+  const copyTarget = () => copy(target, "訳文");
+
+  function clearSource() {
+    source = "";
+    announce("原文をクリアしました");
+  }
+
+  // Where later tasks connect their work: history (TASK-20) and settings (TASK-21).
   function openHistory() {}
   function openSettings() {}
 </script>
@@ -175,6 +243,12 @@
             <TextArea bind:value={source} labelledby={headingId} placeholder="翻訳する文を入力" />
             {#if sourceLanguage === AUTO && source.trim() !== "" && detection !== null}
               <p class="detection">{detectionLabel(detection.language)}</p>
+            {:else if launchUnread && source === ""}
+              <p class="launch-hint">
+                起動時にクリップボードを翻訳するには、システム設定の「プライバシーとセキュリティ」にある「ほかのアプリからのペースト」で
+                tiny-translator を許可してください。一覧に無いときは、先に貼り付けボタンを一度押して確認に答えると並びます。⌘V
+                でも貼り付けられます。
+              </p>
             {/if}
           </div>
         {/snippet}
@@ -205,6 +279,8 @@
     </div>
   </main>
 </div>
+
+<Toast bind:this={toast} />
 
 <style lang="scss">
   .screen {
@@ -282,7 +358,8 @@
     min-block-size: 0;
   }
 
-  .detection {
+  .detection,
+  .launch-hint {
     margin: 0;
     padding: var(--snz-space-xs) var(--snz-space-md);
     font-size: var(--snz-font-size-small);
