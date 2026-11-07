@@ -1,10 +1,10 @@
 ---
 id: TASK-7
 title: アプリの骨格を Windows で確かめる
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-07 00:47'
+updated_date: '2026-11-07 00:50'
 labels: []
 milestone: m-1
 dependencies:
