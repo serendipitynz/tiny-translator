@@ -1,10 +1,10 @@
 ---
 id: TASK-14
 title: Markdown の構造保持翻訳を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-08 08:25'
+updated_date: '2026-11-08 10:34'
 labels: []
 milestone: m-3
 dependencies:
