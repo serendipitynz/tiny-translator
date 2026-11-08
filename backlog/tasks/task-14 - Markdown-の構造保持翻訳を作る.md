@@ -4,7 +4,7 @@ title: Markdown の構造保持翻訳を作る
 status: In Review
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-08 06:16'
+updated_date: '2026-11-08 08:25'
 labels: []
 milestone: m-3
 dependencies:
@@ -81,4 +81,9 @@ R8 のうち Markdown。コードやリンク先を訳すと壊れるので、�
 
 - [P2] 原文が残っているかの確認が部分一致だったので、`https://example.com` に対する `https://example.com/ja` を通してしまった。前後で続いていない (後ろに URL の文字が続かず、前に英数字や `/` が無い) 出現だけを数えるようにし、テストを足した (tags 1 件の追加分と document 1 件)。`cargo test` は 117 件。
 - レビューは上限の 3 回に達したので、この修正は再レビューを受けていない。
+
+## レビューでの修正 (4 回目、Codex)
+
+- 3 回目の修正はオーナーの依頼で再レビューを受けた。
+- [P2] 原文が続いているかの確認を、英数字か `/` で終わる原文にしか掛けていなかったので、`=` や `)` で終わる裸の URL (`https://example.com/search?q=` → `…?q=ja`、`https://example.com/a_(b)` → `…/ja`) を通してしまった。区切り記号で始まる原文 (インラインコードの `` ` ``・自動リンクの `<`) は前後から延ばせないので部分一致のまま数え、英数字で始まる裸の URL は終わりの文字によらず前後とも確かめるようにした。テストを足した (tags 1 件と、document の既存テストに 2 例)。`cargo test` は 118 件。
 <!-- SECTION:NOTES:END -->
