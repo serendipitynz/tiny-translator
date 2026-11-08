@@ -4,6 +4,7 @@ title: 設定画面を作る
 status: To Do
 assignee: []
 created_date: '2026-11-05 19:41'
+updated_date: '2026-11-08 21:37'
 labels: []
 milestone: m-4
 dependencies:
@@ -28,4 +29,5 @@ ordinal: 21000
 - [ ] #2 設定画面を snz-design doc-9 §6.6 のモーダルと §7 の 2 軸の設定画面の実例に従って描く
 - [ ] #3 翻訳エンジンの状態とメモリ使用量の目安を表示する
 - [ ] #4 設定が再起動後も保たれ、読めない設定ファイルは上書きせず退避する
+- [ ] #5 JSON の翻訳しないキー (doc-1 §7.1、TASK-15 で translate が受け取る一覧) を設定できる
 <!-- AC:END -->
