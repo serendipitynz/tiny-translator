@@ -9,10 +9,13 @@ On macOS, process memory comes from `ps` (RSS) and `footprint` (phys_footprint,
 the value Activity Monitor shows as "Memory"), and system memory from `vm_stat`.
 
 On Windows, process memory is the working set and private bytes, and the
-process's dedicated and shared GPU memory (the columns Task Manager shows): with
-the Vulkan build the weights live in GPU memory, which the working set does not
-count — in VRAM on a discrete GPU, and in RAM ("shared GPU memory") on an
-integrated one. System memory is the available physical memory and the commit
+process's dedicated and shared GPU memory (the columns Task Manager shows). The
+Vulkan build puts the weights in dedicated GPU memory: VRAM on a discrete GPU,
+and on an integrated one the RAM reserved for the GPU (UMA), which Windows does
+not see as its own. Shared GPU memory is RAM Windows sees, lent to the GPU. The
+working set counts GPU allocations in neither, but it does count the mmapped
+GGUF pages that stay resident — on a discrete GPU the weights then take RAM as
+well as VRAM, unless the server runs with `-lm none`. System memory is the available physical memory and the commit
 charge, and each result also records the machine (CPU, GPU drivers, AC power).
 
 Standard library only, so it runs without a venv.
