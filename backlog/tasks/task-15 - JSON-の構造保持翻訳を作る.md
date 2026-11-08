@@ -1,10 +1,10 @@
 ---
 id: TASK-15
 title: JSON の構造保持翻訳を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-08 21:38'
+updated_date: '2026-11-08 22:57'
 labels: []
 milestone: m-3
 dependencies:
