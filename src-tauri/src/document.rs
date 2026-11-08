@@ -1132,6 +1132,15 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
         let mut fake = Fake::new(translate_to("https://example.com"));
         let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
         assert_eq!(shown, "今 https://example.com を見る。");
+        // A URL that ends in punctuation can be continued as well.
+        let text = "Visit https://example.com/search?q= now.";
+        let mut fake = Fake::new(translate_to("https://example.com/search?q=ja"));
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, text);
+        let text = "Visit https://example.com/a_(b) now.";
+        let mut fake = Fake::new(translate_to("https://example.com/a_(b)/ja"));
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, text);
     }
 
     #[test]

@@ -250,18 +250,21 @@ impl Tagged {
 }
 
 /// How many times `original` stands in `text` whole: a URL that the text goes on with
-/// (`https://example.com/ja` for `https://example.com`) is another URL. Only an original that ends
-/// (or starts) with a letter, a digit or `/` can be continued; one between delimiters, such as
-/// inline code in backquotes, cannot.
+/// (`https://example.com/ja` for `https://example.com`) is another URL. Inline code and autolinks
+/// open and close with their own delimiters (`` ` ``, `<`), which the text around them cannot
+/// extend; a bare URL has none, so it can be continued whatever character it ends with (`?q=`,
+/// `_(b)`).
 fn whole_occurrences(text: &str, original: &str) -> usize {
-    let open_ended = |c: char| c.is_ascii_alphanumeric() || c == '/';
+    if !original.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+        return text.matches(original).count();
+    }
     text.match_indices(original)
         .filter(|&(at, _)| {
-            let continued_before = original.starts_with(open_ended)
-                && text[..at].chars().next_back().is_some_and(open_ended);
-            let continued_after =
-                original.ends_with(open_ended) && continues(&text[at + original.len()..]);
-            !continued_before && !continued_after
+            let continued_before = text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '/');
+            !continued_before && !continues(&text[at + original.len()..])
         })
         .count()
 }
@@ -477,6 +480,23 @@ mod tests {
         assert!(!tagged.keeps_originals("`a` と `a`、xhttps://x"));
         assert!(tagged.keeps_originals("`a`と`a`、(https://x)."));
         assert!(tagged.keeps_originals("`a`s and `a`, https://x... or"));
+    }
+
+    #[test]
+    fn a_bare_url_ending_in_punctuation_can_still_be_continued() {
+        for url in ["https://x/s?q=", "https://x/a_(b)"] {
+            let mut b = Builder::default();
+            b.text("see ");
+            b.kept("code", url, url);
+            let tagged = b.finish().1.unwrap();
+            assert!(tagged.keeps_originals(&format!("{url} を見る")), "{url}");
+            assert!(tagged.keeps_originals(&format!("({url})。")), "{url}");
+            assert!(!tagged.keeps_originals(&format!("{url}ja を見る")), "{url}");
+            assert!(
+                !tagged.keeps_originals(&format!("{url}/ja を見る")),
+                "{url}"
+            );
+        }
     }
 
     #[test]
