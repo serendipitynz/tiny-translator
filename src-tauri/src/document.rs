@@ -62,6 +62,9 @@ pub enum Segment<'a> {
 pub struct Unit<'a> {
     /// What the engine translates: with tags in place of its inline elements when it has any.
     pub text: Cow<'a, str>,
+    /// The 翻訳単位 as the original writes it, kept in place of a translation that changed what
+    /// must not be translated.
+    pub original: &'a str,
     /// The elements behind the tags in `text`.
     pub tags: Option<Tagged>,
     pub lines: Lines,
@@ -156,6 +159,7 @@ fn text_segments(text: &str) -> Vec<Segment<'_>> {
     for (unit, after) in split.pieces {
         segments.push(Segment::Unit(Unit {
             text: Cow::Borrowed(unit),
+            original: unit,
             tags: None,
             lines: Lines::Keep(String::new()),
         }));
@@ -177,7 +181,8 @@ impl<M: Model, F: FnMut(Update<'_>)> Run<'_, M, F> {
     /// Translates one 翻訳単位. One with tags goes in one prompt with them; when its translation
     /// does not keep them, or it is too long for a prompt or repeats itself, it is translated again
     /// with only the tags whose originals must survive (code, URLs), and then without tags, as one
-    /// without tags is.
+    /// without tags is. A translation without tags that changed one of those originals is not
+    /// used: the 翻訳単位 stays as the original writes it.
     fn unit(&mut self, unit: &Unit) -> Result<Outcome, String> {
         self.out.begin_unit(unit.lines.clone());
         let Some(tags) = &unit.tags else {
@@ -194,7 +199,14 @@ impl<M: Model, F: FnMut(Update<'_>)> Run<'_, M, F> {
             self.history = None;
             attempt = tagged.fallback();
         }
-        self.untagged(tags.plain())
+        let mark = self.out.mark();
+        let start = mark.len;
+        let outcome = self.untagged(tags.plain())?;
+        if outcome == Outcome::Done && !tags.keeps_originals(&self.out.text[start..]) {
+            self.out.replace_since(mark, unit.original);
+            self.history = None;
+        }
+        Ok(outcome)
     }
 
     /// Translates a 翻訳単位 without tags, cut at sentences first when it is too long for a prompt.
@@ -1054,14 +1066,52 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
             if input.contains('<') {
                 Reply::Text("タグなし".into())
             } else {
-                shout(input)
+                Reply::Text(input.replace("Run", "実行").replace("now", "今"))
             }
         });
         let (outcome, shown, _) = run_as(&mut fake, "Run `hello` *now*.", Format::Markdown);
         assert_eq!(outcome, Ok(Outcome::Done));
-        assert_eq!(shown, "RUN `HELLO` NOW.");
+        assert_eq!(shown, "実行 `hello` 今.");
         assert_eq!(fake.inputs().len(), 3);
         assert_eq!(fake.inputs()[2], "Run `hello` now.");
+    }
+
+    #[test]
+    fn a_unit_whose_code_the_last_try_changed_stays_as_the_original() {
+        // With paired elements: both tagged tries fail, and the try without tags changes the code.
+        let mut fake = Fake::new(|input| {
+            if input.contains('<') {
+                Reply::Text("タグなし".into())
+            } else {
+                shout(input)
+            }
+        });
+        let text = "Intro.\n\n> Run `hello` *now*\n> please.\n\nNext.";
+        let (outcome, shown, updates) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, "INTRO.\n\n> Run `hello` *now*\n> please.\n\nNEXT.");
+        assert!(updates.iter().any(|update| update.starts_with('=')));
+        // The next 翻訳単位 goes without a history the original stands in for.
+        assert_eq!(
+            fake.prompts.last().unwrap(),
+            &translate::prompt("Next.", "ja", Some("en"), None)
+        );
+
+        // With kept elements only, there is no try in between.
+        let mut fake = Fake::new(|input| {
+            if input.contains('<') {
+                Reply::Text("USE こんにちは NOW.".into())
+            } else {
+                Reply::Text("Use `こんにちは` now.".into())
+            }
+        });
+        let (outcome, shown, _) = run_as(&mut fake, "Use `hello` now.", Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, "Use `hello` now.");
+        assert_eq!(
+            fake.inputs(),
+            ["Use <code i=\"1\">hello</code> now.", "Use `hello` now."]
+        );
     }
 
     #[test]

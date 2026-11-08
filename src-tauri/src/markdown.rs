@@ -124,11 +124,11 @@ struct Open {
 
 /// The 翻訳単位 made of the inline `events` of one block, and its place in `text`; `None` when it
 /// has nothing to translate.
-fn unit(
-    text: &str,
+fn unit<'a>(
+    text: &'a str,
     events: &[(Event, Range<usize>)],
     block: Block,
-) -> Option<(Range<usize>, Unit<'static>)> {
+) -> Option<(Range<usize>, Unit<'a>)> {
     let start = events.first()?.1.start;
     let last = events.last()?.1.end;
     let end = start + text[start..last].trim_end().len();
@@ -241,6 +241,7 @@ fn unit(
     };
     let unit = Unit {
         text: Cow::Owned(unit_text),
+        original: &text[start..end],
         tags,
         lines,
     };

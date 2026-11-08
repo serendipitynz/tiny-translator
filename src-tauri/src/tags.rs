@@ -157,6 +157,16 @@ impl Tagged {
         &self.plain
     }
 
+    /// Whether `translation`, made from the text without tags, holds every kept element's original
+    /// as written: the model was free to change them there.
+    pub fn keeps_originals(&self, translation: &str) -> bool {
+        let kept = || self.elements.iter().filter(|e| e.kind == Kind::Kept);
+        kept().all(|element| {
+            let wanted = kept().filter(|other| other.open == element.open).count();
+            translation.matches(element.open.as_str()).count() >= wanted
+        })
+    }
+
     /// The text with only the tags of kept and void elements, and those elements, to translate when
     /// this one's tags cannot be put back.
     pub fn fallback(&self) -> Option<(&str, &Tagged)> {
@@ -398,6 +408,21 @@ mod tests {
                 .as_deref(),
             Some("`ls` を root として。\\\n完了")
         );
+    }
+
+    #[test]
+    fn a_translation_without_tags_is_checked_for_every_kept_original() {
+        let mut b = Builder::default();
+        b.kept("code", "`a`", "a");
+        b.text(" and ");
+        b.kept("code", "`a`", "a");
+        b.text(" or ");
+        b.kept("code", "https://x", "https://x");
+        let tagged = b.finish().1.unwrap();
+        assert!(tagged.keeps_originals("`a` と `a`、https://x"));
+        assert!(!tagged.keeps_originals("`a` と https://x"));
+        assert!(!tagged.keeps_originals("`a` と `A`、https://x"));
+        assert!(!tagged.keeps_originals("`a` と `a`、https://y"));
     }
 
     #[test]
