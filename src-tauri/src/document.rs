@@ -176,19 +176,24 @@ struct Run<'a, M, F> {
 impl<M: Model, F: FnMut(Update<'_>)> Run<'_, M, F> {
     /// Translates one 翻訳単位. One with tags goes in one prompt with them; when its translation
     /// does not keep them, or it is too long for a prompt or repeats itself, it is translated again
-    /// without them, as one without tags is.
+    /// with only the tags whose originals must survive (code, URLs), and then without tags, as one
+    /// without tags is.
     fn unit(&mut self, unit: &Unit) -> Result<Outcome, String> {
         self.out.begin_unit(unit.lines.clone());
         let Some(tags) = &unit.tags else {
             return self.untagged(&unit.text);
         };
-        if self.fits(&unit.text, UNIT_TOKENS)?
-            && let Some(outcome) = self.tagged(&unit.text, tags)?
-        {
-            return Ok(outcome);
+        let mut attempt = Some((unit.text.as_ref(), tags));
+        while let Some((text, tagged)) = attempt {
+            if self.fits(text, UNIT_TOKENS)?
+                && let Some(outcome) = self.tagged(text, tagged)?
+            {
+                return Ok(outcome);
+            }
+            // A history with tags the translation just failed to keep would ask for them again.
+            self.history = None;
+            attempt = tagged.fallback();
         }
-        // A history with tags would ask for tags again.
-        self.history = None;
         self.untagged(tags.plain())
     }
 
@@ -1020,6 +1025,43 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
             fake.prompts[2],
             translate::prompt("Read this now.", "ja", Some("en"), None)
         );
+    }
+
+    #[test]
+    fn code_survives_a_translation_that_does_not_keep_the_tags() {
+        let mut fake = Fake::new(|input| match input {
+            "Run <code i=\"1\">hello</code> <em i=\"2\">now</em>." => {
+                Reply::Text("RUN HELLO NOW.".into())
+            }
+            _ => shout(input),
+        });
+        let (outcome, shown, _) = run_as(&mut fake, "Run `hello` *now*.", Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        // The engine wrote the code in capitals; the original comes back all the same.
+        assert_eq!(shown, "RUN `hello` NOW.");
+        assert_eq!(
+            fake.inputs(),
+            [
+                "Run <code i=\"1\">hello</code> <em i=\"2\">now</em>.",
+                "Run <code i=\"1\">hello</code> now.",
+            ]
+        );
+    }
+
+    #[test]
+    fn without_any_tags_kept_the_unit_is_made_again_as_plain_text() {
+        let mut fake = Fake::new(|input| {
+            if input.contains('<') {
+                Reply::Text("タグなし".into())
+            } else {
+                shout(input)
+            }
+        });
+        let (outcome, shown, _) = run_as(&mut fake, "Run `hello` *now*.", Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, "RUN `HELLO` NOW.");
+        assert_eq!(fake.inputs().len(), 3);
+        assert_eq!(fake.inputs()[2], "Run `hello` now.");
     }
 
     #[test]

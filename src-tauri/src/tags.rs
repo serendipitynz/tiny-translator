@@ -5,7 +5,8 @@
 //! `<em i="1">…</em>` and the translation's tags say where the element's markup goes. The number
 //! ties each tag to its element, so the translation may reorder them as its language needs. A
 //! translation whose tags do not answer the original's one for one is not put back: the caller
-//! translates the text without tags instead.
+//! translates the text again with only the tags of kept and void elements, whose originals must
+//! survive, and without tags at all when that fails too.
 //!
 //! Three kinds of element:
 //! - 対 (paired): markup around text that is translated, such as emphasis or a link.
@@ -20,6 +21,10 @@ pub struct Tagged {
     elements: Vec<Element>,
     /// The 翻訳単位 without tags: the text translated when the tags cannot be put back.
     plain: String,
+    /// The 翻訳単位 with only its kept and void elements as tags, and those elements: the text to
+    /// try before going without tags. `None` when that would be the same text as this one or as
+    /// `plain`.
+    fallback: Option<Box<(String, Tagged)>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +44,8 @@ enum Kind {
     Void,
 }
 
-/// Builds a 翻訳単位's text with tags and, alongside, the same text without them.
+/// Builds a 翻訳単位's text with tags and, alongside, the same text with only the tags of kept and
+/// void elements, and without tags.
 #[derive(Debug, Default)]
 pub struct Builder {
     text: String,
@@ -48,6 +54,8 @@ pub struct Builder {
     /// The paired elements open at the end of the text.
     open: Vec<usize>,
     words: bool,
+    kept_text: String,
+    kept_elements: Vec<Element>,
 }
 
 impl Builder {
@@ -55,6 +63,7 @@ impl Builder {
     pub fn text(&mut self, text: &str) {
         self.words |= text.chars().any(char::is_alphabetic);
         self.text.push_str(text);
+        self.kept_text.push_str(text);
         self.plain.push_str(text);
     }
 
@@ -78,6 +87,9 @@ impl Builder {
         let i = self.push(name, Kind::Kept, original.to_owned());
         self.text
             .push_str(&format!("<{name} i=\"{i}\">{shown}</{name}>"));
+        let i = self.push_kept(name, Kind::Kept, original);
+        self.kept_text
+            .push_str(&format!("<{name} i=\"{i}\">{shown}</{name}>"));
         self.plain.push_str(original);
     }
 
@@ -85,7 +97,19 @@ impl Builder {
     pub fn void(&mut self, name: &'static str, original: &str, plain: &str) {
         let i = self.push(name, Kind::Void, original.to_owned());
         self.text.push_str(&format!("<{name} i=\"{i}\"/>"));
+        let i = self.push_kept(name, Kind::Void, original);
+        self.kept_text.push_str(&format!("<{name} i=\"{i}\"/>"));
         self.plain.push_str(plain);
+    }
+
+    fn push_kept(&mut self, name: &'static str, kind: Kind, original: &str) -> usize {
+        self.kept_elements.push(Element {
+            name,
+            kind,
+            open: original.to_owned(),
+            close: String::new(),
+        });
+        self.kept_elements.len()
     }
 
     fn push(&mut self, name: &'static str, kind: Kind, open: String) -> usize {
@@ -110,9 +134,19 @@ impl Builder {
         if self.elements.is_empty() {
             return (self.text, None);
         }
+        let all_kept = self.kept_elements.len() == self.elements.len();
+        let fallback = (!all_kept && !self.kept_elements.is_empty()).then(|| {
+            let tagged = Tagged {
+                elements: self.kept_elements,
+                plain: self.plain.clone(),
+                fallback: None,
+            };
+            Box::new((self.kept_text, tagged))
+        });
         let tagged = Tagged {
             elements: self.elements,
             plain: self.plain,
+            fallback,
         };
         (self.text, Some(tagged))
     }
@@ -121,6 +155,14 @@ impl Builder {
 impl Tagged {
     pub fn plain(&self) -> &str {
         &self.plain
+    }
+
+    /// The text with only the tags of kept and void elements, and those elements, to translate when
+    /// this one's tags cannot be put back.
+    pub fn fallback(&self) -> Option<(&str, &Tagged)> {
+        self.fallback
+            .as_deref()
+            .map(|(text, tagged)| (text.as_str(), tagged))
     }
 
     /// `translation` with its tags put back as the original markup, or `None` when they do not
@@ -335,6 +377,42 @@ mod tests {
              <strong i=\"3\">see <a i=\"4\">docs</a></strong>.<br i=\"5\"/>Done"
         );
         assert_eq!(tagged.plain(), "Run `ls` as root or see docs.\nDone");
+    }
+
+    #[test]
+    fn the_fallback_keeps_only_the_tags_of_kept_and_void_elements() {
+        let (_, tagged) = sample();
+        let (text, fallback) = tagged.fallback().unwrap();
+        assert_eq!(
+            text,
+            "Run <code i=\"1\">ls</code> as root or see docs.<br i=\"2\"/>Done"
+        );
+        assert_eq!(fallback.plain(), tagged.plain());
+        assert!(fallback.fallback().is_none());
+        assert_eq!(
+            fallback
+                .restore(
+                    "<code i=\"1\">エルエス</code> を root として。<br i=\"2\"/>完了",
+                    plain_write
+                )
+                .as_deref(),
+            Some("`ls` を root として。\\\n完了")
+        );
+    }
+
+    #[test]
+    fn there_is_no_fallback_that_would_repeat_a_text() {
+        // Only paired elements: the fallback would be the text without tags.
+        let mut b = Builder::default();
+        b.open("em", "*".into());
+        b.text("a");
+        b.close("*".into());
+        assert!(b.finish().1.unwrap().fallback().is_none());
+        // Only kept elements: the fallback would be the text itself.
+        let mut b = Builder::default();
+        b.text("a ");
+        b.kept("code", "`b`", "b");
+        assert!(b.finish().1.unwrap().fallback().is_none());
     }
 
     #[test]
