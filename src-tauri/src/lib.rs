@@ -2,7 +2,9 @@ mod clipboard;
 mod document;
 mod engine;
 mod language;
+mod markdown;
 mod repetition;
+mod tags;
 mod translate;
 mod units;
 
@@ -92,18 +94,21 @@ fn detect_language(text: String) -> Option<&'static str> {
     language::detect(&text)
 }
 
-/// Translates `text` into `target` 翻訳単位 by 翻訳単位 (doc-1 §7.3), and answers `"done"` or
-/// `"stopped"`. The translation goes to `on_update` as it is generated, as `["append", text]` to add
+/// Translates `text`, read as `format` (`"text"` or `"markdown"`), into `target` 翻訳単位 by 翻訳単位
+/// (doc-1 §7.1, §7.3), and answers `"done"` or `"stopped"`. The translation goes to `on_update` as it is generated, as `["append", text]` to add
 /// at the end or `["replace", text]` for the whole translation so far. Waits for the engine to
 /// start when it is 停止中, and keeps it from being released until the translation ends.
 #[tauri::command]
 async fn translate(
     app: AppHandle,
     text: String,
+    format: String,
     target: String,
     source: Option<String>,
     on_update: Channel<(&'static str, String)>,
 ) -> Result<&'static str, String> {
+    let format =
+        document::Format::from_name(&format).ok_or_else(|| format!("unknown format: {format}"))?;
     // Registered before anything waits, so a stop pressed while the engine is still loading
     // already reaches this translation.
     let cancel = app.state::<Translator>().begin();
@@ -120,13 +125,20 @@ async fn translate(
                 api_key: lease.api_key(),
                 cancel: &cancel,
             };
-            document::translate_text(&mut model, &text, &target, source.as_deref(), |update| {
-                let message = match update {
-                    document::Update::Append(text) => ("append", text.to_owned()),
-                    document::Update::Replace(text) => ("replace", text.to_owned()),
-                };
-                let _ = on_update.send(message);
-            })
+            document::translate(
+                &mut model,
+                &text,
+                format,
+                &target,
+                source.as_deref(),
+                |update| {
+                    let message = match update {
+                        document::Update::Append(text) => ("append", text.to_owned()),
+                        document::Update::Replace(text) => ("replace", text.to_owned()),
+                    };
+                    let _ = on_update.send(message);
+                },
+            )
         });
         app.state::<Translator>().end(&cancel);
         outcome.map(translate::Outcome::as_str)

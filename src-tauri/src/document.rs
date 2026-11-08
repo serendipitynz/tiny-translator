@@ -1,12 +1,20 @@
-//! Translating a text 翻訳単位 by 翻訳単位 (doc-1 §7.3).
+//! Translating a text 翻訳単位 by 翻訳単位 (doc-1 §7.1, §7.3).
 //!
-//! Each piece goes to the engine as a prompt of its own, carrying the piece before it and that
-//! piece's translation, and the translation is put back together with the original's whitespace
-//! between the pieces. A translation that starts repeating itself is cut off and made again
-//! sentence by sentence (doc-2 §1.1).
+//! The format cuts the text into 翻訳単位 and the original between them: the whitespace between
+//! paragraphs for プレーンテキスト, the markup for Markdown (`markdown.rs`). Each piece goes to the
+//! engine as a prompt of its own, carrying the piece before it and that piece's translation, and
+//! the translation is put back together with the original between the pieces. A translation that
+//! starts repeating itself is cut off and made again sentence by sentence (doc-2 §1.1).
+//!
+//! A 翻訳単位 with inline elements goes with them as 番号付きのタグ (`tags.rs`), and is translated
+//! again without them when its translation does not keep them.
+
+use std::borrow::Cow;
 
 use crate::engine::CONTEXT_TOKENS;
+use crate::markdown;
 use crate::repetition::Repetition;
+use crate::tags::{Hide, Tagged};
 use crate::translate::{self, Completion, Outcome};
 use crate::units;
 
@@ -41,16 +49,89 @@ const UNIT_TOKENS: usize = CONTEXT_TOKENS / 8;
 /// The longest history a prompt carries, its source text and translation together, in tokens.
 const HISTORY_TOKENS: usize = CONTEXT_TOKENS / 4;
 
-/// Translates `text`, as プレーンテキスト, into `target`, sending the translation to `emit` as it is
+/// A text as the parts the translation keeps as they are and the 翻訳単位 between them.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Segment<'a> {
+    /// Text of the original that goes into the translation as it is.
+    Kept(&'a str),
+    Unit(Unit<'a>),
+}
+
+/// One 翻訳単位 and how its translation is written back.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Unit<'a> {
+    /// What the engine translates: with tags in place of its inline elements when it has any.
+    pub text: Cow<'a, str>,
+    /// The 翻訳単位 as the original writes it, kept in place of a translation that changed what
+    /// must not be translated.
+    pub original: &'a str,
+    /// The elements behind the tags in `text`.
+    pub tags: Option<Tagged>,
+    pub lines: Lines,
+}
+
+/// How the line breaks of a translation are written where its 翻訳単位 stood.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lines {
+    /// As they are, each followed by `prefix`: the markup that carries a line on inside a Markdown
+    /// block quote or list item (`> `, the item's indent), empty elsewhere.
+    Keep(String),
+    /// As spaces: a Markdown heading is one line.
+    Join,
+    /// As spaces, with each `|` that is not escaped escaped: a Markdown table cell is one line, and
+    /// a bare `|` ends it.
+    Cell,
+}
+
+impl Lines {
+    /// Adds the translated `text` to `out`.
+    fn write(&self, out: &mut String, text: &str) {
+        for c in text.chars() {
+            match (self, c) {
+                (Lines::Keep(prefix), '\n') => {
+                    out.push('\n');
+                    out.push_str(prefix);
+                }
+                (Lines::Join | Lines::Cell, '\n') => out.push(' '),
+                (Lines::Cell, '|') if !out.ends_with('\\') => out.push_str("\\|"),
+                _ => out.push(c),
+            }
+        }
+    }
+}
+
+/// The format of the original (doc-1 §7.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Text,
+    Markdown,
+}
+
+impl Format {
+    /// The format the screen names (`src/lib/translate.ts`).
+    pub fn from_name(name: &str) -> Option<Format> {
+        match name {
+            "text" => Some(Format::Text),
+            "markdown" => Some(Format::Markdown),
+            _ => None,
+        }
+    }
+}
+
+/// Translates `text`, read as `format`, into `target`, sending the translation to `emit` as it is
 /// generated.
-pub fn translate_text(
+pub fn translate(
     model: &mut impl Model,
     text: &str,
+    format: Format,
     target: &str,
     source: Option<&str>,
     emit: impl FnMut(Update<'_>),
 ) -> Result<Outcome, String> {
-    let split = units::paragraphs(text);
+    let segments = match format {
+        Format::Text => text_segments(text),
+        Format::Markdown => markdown::segments(text),
+    };
     let mut run = Run {
         model,
         target,
@@ -58,14 +139,33 @@ pub fn translate_text(
         out: Output::new(emit),
         history: None,
     };
-    run.out.raw(split.leading);
-    for (unit, after) in split.pieces {
-        if run.unit(unit)? == Outcome::Stopped {
-            return Ok(Outcome::Stopped);
+    for segment in &segments {
+        match segment {
+            Segment::Kept(text) => run.out.raw(text),
+            Segment::Unit(unit) => {
+                if run.unit(unit)? == Outcome::Stopped {
+                    return Ok(Outcome::Stopped);
+                }
+            }
         }
-        run.out.raw(after);
     }
     Ok(Outcome::Done)
+}
+
+/// プレーンテキストの翻訳単位 (doc-1 §7.1): its paragraphs, with the whitespace around them kept.
+fn text_segments(text: &str) -> Vec<Segment<'_>> {
+    let split = units::paragraphs(text);
+    let mut segments = vec![Segment::Kept(split.leading)];
+    for (unit, after) in split.pieces {
+        segments.push(Segment::Unit(Unit {
+            text: Cow::Borrowed(unit),
+            original: unit,
+            tags: None,
+            lines: Lines::Keep(String::new()),
+        }));
+        segments.push(Segment::Kept(after));
+    }
+    segments
 }
 
 struct Run<'a, M, F> {
@@ -78,8 +178,39 @@ struct Run<'a, M, F> {
 }
 
 impl<M: Model, F: FnMut(Update<'_>)> Run<'_, M, F> {
-    /// Translates one 翻訳単位, cut at sentences first when it is too long for a prompt.
-    fn unit(&mut self, unit: &str) -> Result<Outcome, String> {
+    /// Translates one 翻訳単位. One with tags goes in one prompt with them; when its translation
+    /// does not keep them, or it is too long for a prompt or repeats itself, it is translated again
+    /// with only the tags whose originals must survive (code, URLs), and then without tags, as one
+    /// without tags is. A translation without tags that changed one of those originals is not
+    /// used: the 翻訳単位 stays as the original writes it.
+    fn unit(&mut self, unit: &Unit) -> Result<Outcome, String> {
+        self.out.begin_unit(unit.lines.clone());
+        let Some(tags) = &unit.tags else {
+            return self.untagged(&unit.text);
+        };
+        let mut attempt = Some((unit.text.as_ref(), tags));
+        while let Some((text, tagged)) = attempt {
+            if self.fits(text, UNIT_TOKENS)?
+                && let Some(outcome) = self.tagged(text, tagged)?
+            {
+                return Ok(outcome);
+            }
+            // A history with tags the translation just failed to keep would ask for them again.
+            self.history = None;
+            attempt = tagged.fallback();
+        }
+        let mark = self.out.mark();
+        let start = mark.len;
+        let outcome = self.untagged(tags.plain())?;
+        if outcome == Outcome::Done && !tags.keeps_originals(&self.out.text[start..]) {
+            self.out.replace_since(mark, unit.original);
+            self.history = None;
+        }
+        Ok(outcome)
+    }
+
+    /// Translates a 翻訳単位 without tags, cut at sentences first when it is too long for a prompt.
+    fn untagged(&mut self, unit: &str) -> Result<Outcome, String> {
         let pieces = if surely_fits(unit, UNIT_TOKENS) {
             vec![(unit, "")]
         } else {
@@ -94,21 +225,64 @@ impl<M: Model, F: FnMut(Update<'_>)> Run<'_, M, F> {
         Ok(Outcome::Done)
     }
 
+    /// Translates `text`, which has tags, in one prompt. The screen is shown the translation's
+    /// text as it comes, and then the translation with its tags put back as the original markup.
+    /// `None` when the tags cannot be put back or the translation repeats itself: the translation
+    /// is then taken back.
+    fn tagged(&mut self, text: &str, tags: &Tagged) -> Result<Option<Outcome>, String> {
+        let mark = self.out.mark();
+        let prompt = self.prompt(text)?;
+        let mut check = Repetition::for_input(text);
+        let mut hide = Hide::default();
+        let mut generated = String::new();
+        let mut repeats = false;
+        let out = &mut self.out;
+        let completion = self.model.complete(&prompt, &mut |piece| {
+            generated.push_str(piece);
+            out.translation(&hide.push(piece));
+            repeats = piece.chars().any(|c| check.push(c).is_some());
+            !repeats
+        })?;
+        if completion == Completion::Stopped {
+            return Ok(Some(Outcome::Stopped));
+        }
+        let translation = generated.trim();
+        let restored = (!repeats)
+            .then(|| tags.restore(translation, |out, text| self.out.lines.write(out, text)))
+            .flatten();
+        let Some(restored) = restored else {
+            self.out.rewind(mark);
+            return Ok(None);
+        };
+        self.out.replace_since(mark, &restored);
+        self.history = Some((text.to_owned(), translation.to_owned()));
+        Ok(Some(Outcome::Done))
+    }
+
+    /// The prompt for `text`, with the history when it fits.
+    fn prompt(&mut self, text: &str) -> Result<String, String> {
+        let history = self
+            .history_that_fits()?
+            .then_some(self.history.as_ref())
+            .flatten();
+        Ok(translate::prompt(
+            text,
+            self.target,
+            self.source,
+            history.map(|(earlier, translation)| (earlier.as_str(), translation.as_str())),
+        ))
+    }
+
+    fn fits(&mut self, text: &str, max: usize) -> Result<bool, String> {
+        Ok(surely_fits(text, max) || self.model.tokens(text)? <= max)
+    }
+
     /// Translates `text` in one prompt. When the translation starts repeating itself, it is taken
     /// back and, if `may_retry`, made again sentence by sentence; a sentence that repeats itself
     /// all the same keeps its translation up to the end of the first time round.
     fn piece(&mut self, text: &str, may_retry: bool) -> Result<Outcome, String> {
         let mark = self.out.mark();
-        let history = self
-            .history_that_fits()?
-            .then_some(self.history.as_ref())
-            .flatten();
-        let prompt = translate::prompt(
-            text,
-            self.target,
-            self.source,
-            history.map(|(earlier, translation)| (earlier.as_str(), translation.as_str())),
-        );
+        let prompt = self.prompt(text)?;
 
         let mut check = Repetition::for_input(text);
         let mut generated = String::new();
@@ -189,6 +363,8 @@ struct Output<F> {
     /// The original's whitespace between the last piece and the next one of the same 翻訳単位, held
     /// until the next piece's translation starts and [`joint`] can see both sides.
     join: Option<String>,
+    /// How the current 翻訳単位's translation writes its line breaks.
+    lines: Lines,
 }
 
 /// Where the translation stood before a piece, to go back to with [`Output::rewind`].
@@ -205,14 +381,24 @@ impl<F: FnMut(Update<'_>)> Output<F> {
             started: false,
             trailing: String::new(),
             join: None,
+            lines: Lines::Keep(String::new()),
         }
     }
 
-    /// Text of the original, sent as it is: the whitespace before the first 翻訳単位 and between
-    /// two of them.
+    /// Text of the original, sent as it is: what lies before the first 翻訳単位 and between two of
+    /// them.
     fn raw(&mut self, text: &str) {
         self.join = None;
-        self.push(text);
+        if text.is_empty() {
+            return;
+        }
+        self.text.push_str(text);
+        (self.emit)(Update::Append(text));
+    }
+
+    fn begin_unit(&mut self, lines: Lines) {
+        self.join = None;
+        self.lines = lines;
     }
 
     /// The whitespace after a piece that the next piece of the same 翻訳単位 follows.
@@ -220,12 +406,14 @@ impl<F: FnMut(Update<'_>)> Output<F> {
         self.join = Some(original.to_owned());
     }
 
+    /// Text of the translation, its line breaks written as [`Output::lines`] says.
     fn push(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
-        self.text.push_str(text);
-        (self.emit)(Update::Append(text));
+        let start = self.text.len();
+        self.lines.write(&mut self.text, text);
+        (self.emit)(Update::Append(&self.text[start..]));
     }
 
     /// The next piece of the engine's translation.
@@ -272,6 +460,15 @@ impl<F: FnMut(Update<'_>)> Output<F> {
     fn rewind(&mut self, mark: Mark) {
         self.text.truncate(mark.len);
         self.join = mark.join;
+        self.end_translation();
+        (self.emit)(Update::Replace(&self.text));
+    }
+
+    /// Puts `text` in place of everything sent since `mark`.
+    fn replace_since(&mut self, mark: Mark, text: &str) {
+        self.text.truncate(mark.len);
+        self.text.push_str(text);
+        self.join = None;
         self.end_translation();
         (self.emit)(Update::Replace(&self.text));
     }
@@ -397,18 +594,33 @@ mod tests {
     /// Translates `text` from English into Japanese, and answers the outcome, the translation
     /// the screen ends up showing, and every update sent.
     fn run(fake: &mut Fake, text: &str) -> (Result<Outcome, String>, String, Vec<String>) {
+        run_as(fake, text, Format::Text)
+    }
+
+    fn run_as(
+        fake: &mut Fake,
+        text: &str,
+        format: Format,
+    ) -> (Result<Outcome, String>, String, Vec<String>) {
         let mut shown = String::new();
         let mut updates = Vec::new();
-        let outcome = translate_text(fake, text, "ja", Some("en"), |update| match update {
-            Update::Append(piece) => {
-                shown.push_str(piece);
-                updates.push(format!("+{piece}"));
-            }
-            Update::Replace(whole) => {
-                shown = whole.to_owned();
-                updates.push(format!("={whole}"));
-            }
-        });
+        let outcome = translate(
+            fake,
+            text,
+            format,
+            "ja",
+            Some("en"),
+            |update| match update {
+                Update::Append(piece) => {
+                    shown.push_str(piece);
+                    updates.push(format!("+{piece}"));
+                }
+                Update::Replace(whole) => {
+                    shown = whole.to_owned();
+                    updates.push(format!("={whole}"));
+                }
+            },
+        );
         (outcome, shown, updates)
     }
 
@@ -662,5 +874,349 @@ mod tests {
         assert_eq!(outcome, Ok(Outcome::Done));
         assert_eq!(shown, " \n\n ");
         assert!(fake.prompts.is_empty());
+    }
+
+    /// Translates by writing the letters outside tags in capitals, keeping the tags, as an engine
+    /// that keeps them does.
+    fn shout(input: &str) -> Reply {
+        let mut out = String::new();
+        let mut in_tag = false;
+        for c in input.chars() {
+            match c {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                _ => {}
+            }
+            if in_tag || c == '>' {
+                out.push(c);
+            } else {
+                out.extend(c.to_uppercase());
+            }
+        }
+        Reply::Text(out)
+    }
+
+    const MARKDOWN: &str = r#"---
+title: Guide
+---
+
+# Getting *started* {#start}
+
+Install the app with `npm install tiny`, then read
+[the guide](https://example.com/guide "Guide") or https://example.com/faq.
+
+> [!NOTE]
+> Keep the **model** file
+> next to the app.  
+> It is large.
+
+- First item
+- [x] Done item with ~~old~~ text
+  1. Nested _step_
+
+| Option | Meaning |
+|--------|---------|
+| `--port` | The port \| number |
+| 42 | Answer |
+
+```sh
+npm run build
+```
+
+<div align="center">
+  <img src="logo.png">
+</div>
+
+See [the guide] and the note[^1].
+
+[the guide]: https://example.com/guide
+[^1]: A footnote.
+"#;
+
+    #[test]
+    fn markdown_keeps_its_structure_and_translates_only_its_text() {
+        let mut fake = Fake::new(shout);
+        let (outcome, shown, updates) = run_as(&mut fake, MARKDOWN, Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(
+            shown,
+            r#"---
+title: Guide
+---
+
+# GETTING *STARTED* {#start}
+
+INSTALL THE APP WITH `npm install tiny`, THEN READ
+[THE GUIDE](https://example.com/guide "Guide") OR https://example.com/faq.
+
+> [!NOTE]
+> KEEP THE **MODEL** FILE
+> NEXT TO THE APP.  
+> IT IS LARGE.
+
+- FIRST ITEM
+- [x] DONE ITEM WITH ~~OLD~~ TEXT
+  1. NESTED *STEP*
+
+| OPTION | MEANING |
+|--------|---------|
+| `--port` | THE PORT \| NUMBER |
+| 42 | ANSWER |
+
+```sh
+npm run build
+```
+
+<div align="center">
+  <img src="logo.png">
+</div>
+
+SEE [THE GUIDE][the guide] AND THE NOTE[^1].
+
+[the guide]: https://example.com/guide
+[^1]: A FOOTNOTE.
+"#
+        );
+        assert_eq!(
+            fake.inputs(),
+            [
+                "Getting <em i=\"1\">started</em>",
+                "Install the app with <code i=\"1\">npm install tiny</code>, then read\n\
+                 <a i=\"2\">the guide</a> or <code i=\"3\">https://example.com/faq</code>.",
+                "Keep the <strong i=\"1\">model</strong> file\nnext to the app.<br i=\"2\"/>It is large.",
+                "First item",
+                "Done item with <s i=\"1\">old</s> text",
+                "Nested <em i=\"1\">step</em>",
+                "Option",
+                "Meaning",
+                "The port \\| number",
+                "Answer",
+                "See <a i=\"1\">the guide</a> and the note<x i=\"2\"/>.",
+                "A footnote.",
+            ]
+        );
+        // The screen never shows a tag, not even while a translation streams in.
+        for update in &updates {
+            assert!(!update.contains(" i=\""), "{update}");
+        }
+        // The history carries the tags, so the next translation keeps them likewise.
+        assert_eq!(
+            fake.prompts[1],
+            translate::prompt(
+                fake.inputs()[1],
+                "ja",
+                Some("en"),
+                Some((
+                    "Getting <em i=\"1\">started</em>",
+                    "GETTING <em i=\"1\">STARTED</em>"
+                ))
+            )
+        );
+    }
+
+    #[test]
+    fn tags_the_translation_does_not_keep_are_left_out_and_it_is_made_again() {
+        let mut fake = Fake::new(|input| match input {
+            "Read <em i=\"1\">this</em> now." => Reply::Text("READ THIS NOW.".into()),
+            _ => shout(input),
+        });
+        let (outcome, shown, _) =
+            run_as(&mut fake, "Intro.\n\nRead *this* now.\n", Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, "INTRO.\n\nREAD THIS NOW.\n");
+        assert_eq!(
+            fake.inputs(),
+            [
+                "Intro.",
+                "Read <em i=\"1\">this</em> now.",
+                "Read this now."
+            ]
+        );
+        // Without the history, whose tags would ask for tags again.
+        assert_eq!(
+            fake.prompts[2],
+            translate::prompt("Read this now.", "ja", Some("en"), None)
+        );
+    }
+
+    #[test]
+    fn code_survives_a_translation_that_does_not_keep_the_tags() {
+        let mut fake = Fake::new(|input| match input {
+            "Run <code i=\"1\">hello</code> <em i=\"2\">now</em>." => {
+                Reply::Text("RUN HELLO NOW.".into())
+            }
+            _ => shout(input),
+        });
+        let (outcome, shown, _) = run_as(&mut fake, "Run `hello` *now*.", Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        // The engine wrote the code in capitals; the original comes back all the same.
+        assert_eq!(shown, "RUN `hello` NOW.");
+        assert_eq!(
+            fake.inputs(),
+            [
+                "Run <code i=\"1\">hello</code> <em i=\"2\">now</em>.",
+                "Run <code i=\"1\">hello</code> now.",
+            ]
+        );
+    }
+
+    #[test]
+    fn without_any_tags_kept_the_unit_is_made_again_as_plain_text() {
+        let mut fake = Fake::new(|input| {
+            if input.contains('<') {
+                Reply::Text("タグなし".into())
+            } else {
+                Reply::Text(input.replace("Run", "実行").replace("now", "今"))
+            }
+        });
+        let (outcome, shown, _) = run_as(&mut fake, "Run `hello` *now*.", Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, "実行 `hello` 今.");
+        assert_eq!(fake.inputs().len(), 3);
+        assert_eq!(fake.inputs()[2], "Run `hello` now.");
+    }
+
+    #[test]
+    fn a_unit_whose_code_the_last_try_changed_stays_as_the_original() {
+        // With paired elements: both tagged tries fail, and the try without tags changes the code.
+        let mut fake = Fake::new(|input| {
+            if input.contains('<') {
+                Reply::Text("タグなし".into())
+            } else {
+                shout(input)
+            }
+        });
+        let text = "Intro.\n\n> Run `hello` *now*\n> please.\n\nNext.";
+        let (outcome, shown, updates) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, "INTRO.\n\n> Run `hello` *now*\n> please.\n\nNEXT.");
+        assert!(updates.iter().any(|update| update.starts_with('=')));
+        // The next 翻訳単位 goes without a history the original stands in for.
+        assert_eq!(
+            fake.prompts.last().unwrap(),
+            &translate::prompt("Next.", "ja", Some("en"), None)
+        );
+
+        // With kept elements only, there is no try in between.
+        let mut fake = Fake::new(|input| {
+            if input.contains('<') {
+                Reply::Text("USE こんにちは NOW.".into())
+            } else {
+                Reply::Text("Use `こんにちは` now.".into())
+            }
+        });
+        let (outcome, shown, _) = run_as(&mut fake, "Use `hello` now.", Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, "Use `hello` now.");
+        assert_eq!(
+            fake.inputs(),
+            ["Use <code i=\"1\">hello</code> now.", "Use `hello` now."]
+        );
+    }
+
+    #[test]
+    fn a_url_the_untagged_try_extended_keeps_the_original() {
+        let translate_to = |url: &'static str| {
+            move |input: &str| {
+                if input.contains('<') {
+                    Reply::Text("タグなし".into())
+                } else {
+                    Reply::Text(format!("今 {url} を見る。"))
+                }
+            }
+        };
+        let text = "Visit https://example.com now.";
+        let mut fake = Fake::new(translate_to("https://example.com/ja"));
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, text);
+        let mut fake = Fake::new(translate_to("https://example.com"));
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, "今 https://example.com を見る。");
+        // A URL that ends in punctuation can be continued as well.
+        let text = "Visit https://example.com/search?q= now.";
+        let mut fake = Fake::new(translate_to("https://example.com/search?q=ja"));
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, text);
+        let text = "Visit https://example.com/a_(b) now.";
+        let mut fake = Fake::new(translate_to("https://example.com/a_(b)/ja"));
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, text);
+    }
+
+    #[test]
+    fn a_collapsed_link_that_ends_a_unit_comes_back_once() {
+        let text = "Go [Home][]\n\n[home]: /h\n";
+        let mut fake = Fake::new(shout);
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, "GO [HOME][Home]\n\n[home]: /h\n");
+        let mut fake = Fake::new(|input| {
+            if input.contains('<') {
+                Reply::Text("GO HOME".into())
+            } else {
+                shout(input)
+            }
+        });
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, "GO HOME\n\n[home]: /h\n");
+    }
+
+    #[test]
+    fn a_tagged_unit_that_repeats_itself_is_made_again_without_tags() {
+        let mut fake = Fake::new(|input| {
+            if input.contains("<em") {
+                Reply::Loop("始め".into(), "<em i=\"1\">同じ</em>".into())
+            } else {
+                shout(input)
+            }
+        });
+        let (outcome, shown, _) = run_as(&mut fake, "One *two*. Three.", Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, "ONE TWO. THREE.");
+        assert_eq!(
+            fake.inputs(),
+            ["One <em i=\"1\">two</em>. Three.", "One two. Three."]
+        );
+    }
+
+    #[test]
+    fn a_tagged_unit_too_long_for_a_prompt_goes_without_tags() {
+        let paragraph = format!("*Start.* {}", sentences(80).join(" "));
+        let mut fake = Fake::new(shout);
+        let (outcome, _, _) = run_as(&mut fake, &paragraph, Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        let inputs = fake.inputs();
+        assert!(inputs.len() > 1);
+        assert!(inputs[0].starts_with("Start. This is"), "{}", inputs[0]);
+        assert!(inputs.iter().all(|input| !input.contains('<')));
+    }
+
+    #[test]
+    fn line_breaks_of_a_translation_follow_its_block() {
+        let mut fake = Fake::new(|input| match input {
+            "quoted" => Reply::Text("一行目\n二行目".into()),
+            "Title" => Reply::Text("見出し\nの続き".into()),
+            "cell" => Reply::Text("a | b \\| c\nd".into()),
+            _ => shout(input),
+        });
+        let text = "> - quoted\n\n## Title\n\n| cell |\n|---|\n";
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(
+            shown,
+            "> - 一行目\n>   二行目\n\n## 見出し の続き\n\n| a \\| b \\| c d |\n|---|\n"
+        );
+    }
+
+    #[test]
+    fn a_stop_during_a_tagged_unit_ends_the_translation() {
+        let mut fake = Fake::new(|input| {
+            if input.contains("<em") {
+                Reply::Stopped
+            } else {
+                shout(input)
+            }
+        });
+        let (outcome, shown, _) = run_as(&mut fake, "One.\n\n*Two*.\n\nThree.", Format::Markdown);
+        assert_eq!(outcome, Ok(Outcome::Stopped));
+        assert_eq!(shown, "ONE.\n\n");
     }
 }

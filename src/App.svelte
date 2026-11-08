@@ -84,7 +84,12 @@
         ++detecting;
         detection = { language: detected };
       }
-      const request = { text, ...promptLanguages(sourceSelected, targetSelected, detected, DEFAULT_PRIORITIES) };
+      // Read as text until the screen offers the choice of format (doc-1 §7.2).
+      const request = {
+        text,
+        format: "text" as const,
+        ...promptLanguages(sourceSelected, targetSelected, detected, DEFAULT_PRIORITIES),
+      };
       await translateText(request, (text) => {
         if (id === current) {
           target = text;
