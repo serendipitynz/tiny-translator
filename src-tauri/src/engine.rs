@@ -240,8 +240,9 @@ impl Engine {
     }
 
     /// Changes 自動解放までの時間; `None` never releases. Takes effect on the running engine too.
+    // The same condition as the tests' module: they are its only caller, and they run on Unix only.
     #[cfg_attr(
-        not(test),
+        not(all(test, unix)),
         expect(
             dead_code,
             reason = "the settings screen (TASK-21) is the first caller"
@@ -601,21 +602,49 @@ fn process_is(pid: u32, program: &Path) -> bool {
 
 #[cfg(windows)]
 fn process_is(pid: u32, program: &Path) -> bool {
-    // tasklist reports only the image name, not the path.
-    let Some(name) = program
-        .file_name()
-        .map(|name| name.to_string_lossy().to_lowercase())
-    else {
-        return false;
+    // The full path, not the image name tasklist reports: any other llama-server.exe has the same
+    // name. Windows paths are case-insensitive, and either side may carry the `\\?\` prefix.
+    let normalize = |path: &Path| {
+        let path = path.to_string_lossy();
+        path.strip_prefix(r"\\?\").unwrap_or(&path).to_lowercase()
     };
-    windowless("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
-        .output()
-        .is_ok_and(|out| {
-            String::from_utf8_lossy(&out.stdout)
-                .to_lowercase()
-                .starts_with(&format!("\"{name}\""))
-        })
+    image_path(pid).is_some_and(|image| normalize(&image) == normalize(program))
+}
+
+#[cfg(windows)]
+fn image_path(pid: u32) -> Option<PathBuf> {
+    use std::ffi::{OsString, c_void};
+    use std::os::windows::ffi::OsStringExt;
+
+    // Declared by hand rather than through windows-sys: three kernel32 functions, which std
+    // already links, do not justify a new dependency.
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit_handle: i32, pid: u32) -> *mut c_void;
+        fn QueryFullProcessImageNameW(
+            process: *mut c_void,
+            flags: u32,
+            name: *mut u16,
+            size: *mut u32,
+        ) -> i32;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+    let mut name = vec![0u16; 32_768];
+    let mut size = name.len() as u32;
+    // SAFETY: the handle is checked for null and closed before leaving the block; `name` holds
+    // `size` u16s, and the call writes at most that many and stores the length it wrote in `size`.
+    let found = unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let found = QueryFullProcessImageNameW(process, 0, name.as_mut_ptr(), &mut size) != 0;
+        CloseHandle(process);
+        found
+    };
+    found.then(|| PathBuf::from(OsString::from_wide(&name[..size as usize])))
 }
 
 #[cfg(unix)]
@@ -1047,5 +1076,50 @@ mod tests {
                 "--no-webui",
             ]
         );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn kill_leftover_ends_only_the_program_at_the_same_path() {
+        let system32 = Path::new(&std::env::var_os("SystemRoot").unwrap()).join("System32");
+        let ping = system32.join("PING.EXE");
+        let pid_file = std::env::temp_dir().join(format!(
+            "tiny-translator-leftover-{}.pid",
+            std::process::id()
+        ));
+        let spawn = || {
+            Command::new(&ping)
+                .args(["-n", "60", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        };
+
+        // Same file name, another directory: what an unrelated llama-server.exe looks like.
+        let mut other = spawn();
+        fs::write(&pid_file, other.id().to_string()).unwrap();
+        kill_leftover(&pid_file, Path::new(r"C:\elsewhere\PING.EXE"));
+        assert!(
+            other.try_wait().unwrap().is_none(),
+            "a process of another program was ended"
+        );
+        assert!(!pid_file.exists());
+        other.kill().unwrap();
+        other.wait().unwrap();
+
+        let mut leftover = spawn();
+        fs::write(&pid_file, leftover.id().to_string()).unwrap();
+        let differently_cased = system32.join("ping.exe").to_string_lossy().to_uppercase();
+        kill_leftover(&pid_file, Path::new(&differently_cased));
+        assert_eq!(
+            leftover.wait().unwrap().code(),
+            Some(1),
+            "the leftover was not killed"
+        );
+        assert!(!pid_file.exists());
     }
 }
