@@ -3,8 +3,12 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 /** How a translation ended: the engine finished it, or it was stopped first. */
 export type Outcome = "done" | "stopped";
 
+/** How the original is read (doc-1 §7.1): its structure is kept in the translation. */
+export type Format = "text" | "markdown";
+
 export interface TranslateRequest {
   text: string;
+  format: Format;
   /** The language code the prompt names as the output's `lang`. */
   target: string;
   /** The source language, or null to leave it to the model (doc-1 §6.1's 判定なし). */
