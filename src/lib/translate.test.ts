@@ -23,12 +23,15 @@ describe("translate", () => {
   it("passes the request and a channel whose updates build up the translation", async () => {
     tauri.calls = [];
     const texts: string[] = [];
-    const outcome = await translate({ text: "Hello", format: "markdown", target: "ja", source: null }, (text) => texts.push(text));
+    const outcome = await translate(
+      { text: "Hello", format: "json", untranslatedKeys: ["id"], target: "ja", source: null },
+      (text) => texts.push(text),
+    );
     expect(outcome).toBe("done");
     const [call] = tauri.calls;
     expect(call.command).toBe("translate");
     const { onUpdate, ...request } = call.args as { onUpdate: { onmessage: (m: [string, string]) => void } };
-    expect(request).toEqual({ text: "Hello", format: "markdown", target: "ja", source: null });
+    expect(request).toEqual({ text: "Hello", format: "json", untranslatedKeys: ["id"], target: "ja", source: null });
     onUpdate.onmessage(["append", "こんにちは"]);
     onUpdate.onmessage(["append", "。\n\n"]);
     onUpdate.onmessage(["append", "繰り返し繰り返し"]);

@@ -1,7 +1,8 @@
 //! Translating a text 翻訳単位 by 翻訳単位 (doc-1 §7.1, §7.3).
 //!
 //! The format cuts the text into 翻訳単位 and the original between them: the whitespace between
-//! paragraphs for プレーンテキスト, the markup for Markdown (`markdown.rs`). Each piece goes to the
+//! paragraphs for プレーンテキスト, the markup for Markdown (`markdown.rs`), everything but the
+//! string values for JSON (`json.rs`). Each piece goes to the
 //! engine as a prompt of its own, carrying the piece before it and that piece's translation, and
 //! the translation is put back together with the original between the pieces. A translation that
 //! starts repeating itself is cut off and made again sentence by sentence (doc-2 §1.1).
@@ -12,6 +13,7 @@
 use std::borrow::Cow;
 
 use crate::engine::CONTEXT_TOKENS;
+use crate::json;
 use crate::markdown;
 use crate::repetition::Repetition;
 use crate::tags::{Hide, Tagged};
@@ -81,6 +83,8 @@ pub enum Lines {
     /// As spaces, with each `|` that is not escaped escaped: a Markdown table cell is one line, and
     /// a bare `|` ends it.
     Cell,
+    /// Escaped, as the rest of the translation is, inside a JSON string.
+    Json,
 }
 
 impl Lines {
@@ -94,6 +98,7 @@ impl Lines {
                 }
                 (Lines::Join | Lines::Cell, '\n') => out.push(' '),
                 (Lines::Cell, '|') if !out.ends_with('\\') => out.push_str("\\|"),
+                (Lines::Json, c) => json::escape(out, c),
                 _ => out.push(c),
             }
         }
@@ -101,29 +106,35 @@ impl Lines {
 }
 
 /// The format of the original (doc-1 §7.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Format {
     Text,
     Markdown,
+    /// JSON, whose values under the keys named here are not translated.
+    Json {
+        untranslated_keys: Vec<String>,
+    },
 }
 
 impl Format {
-    /// The format the screen names (`src/lib/translate.ts`).
-    pub fn from_name(name: &str) -> Option<Format> {
+    /// The format the screen names (`src/lib/translate.ts`), with the screen's 翻訳しないキー,
+    /// which only JSON reads.
+    pub fn from_name(name: &str, untranslated_keys: Vec<String>) -> Option<Format> {
         match name {
             "text" => Some(Format::Text),
             "markdown" => Some(Format::Markdown),
+            "json" => Some(Format::Json { untranslated_keys }),
             _ => None,
         }
     }
 }
 
 /// Translates `text`, read as `format`, into `target`, sending the translation to `emit` as it is
-/// generated.
+/// generated. Fails before anything is sent when `text` cannot be read as `format`.
 pub fn translate(
     model: &mut impl Model,
     text: &str,
-    format: Format,
+    format: &Format,
     target: &str,
     source: Option<&str>,
     emit: impl FnMut(Update<'_>),
@@ -131,6 +142,7 @@ pub fn translate(
     let segments = match format {
         Format::Text => text_segments(text),
         Format::Markdown => markdown::segments(text),
+        Format::Json { untranslated_keys } => json::segments(text, untranslated_keys)?,
     };
     let mut run = Run {
         model,
@@ -607,7 +619,7 @@ mod tests {
         let outcome = translate(
             fake,
             text,
-            format,
+            &format,
             "ja",
             Some("en"),
             |update| match update {
@@ -1218,5 +1230,125 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
         let (outcome, shown, _) = run_as(&mut fake, "One.\n\n*Two*.\n\nThree.", Format::Markdown);
         assert_eq!(outcome, Ok(Outcome::Stopped));
         assert_eq!(shown, "ONE.\n\n");
+    }
+
+    const JSON: &str = r#"{
+  "app": {
+    "title": "Tiny \"Translator\"",
+    "greeting": "Hello, ",
+    "id": "home",
+    "lines": "First line\nSecond line"
+  },
+  "count": 3,
+  "ratio": 1.50,
+  "enabled": true,
+  "missing": null,
+  "items": ["One", 2, "", "42", {"id": "x", "label": "Two\\Three"}],
+  "zeta": "Last"
+}"#;
+
+    #[test]
+    fn json_keeps_its_structure_and_key_order_and_translates_only_string_values() {
+        let mut fake = Fake::new(|input| {
+            Reply::Text(
+                match input {
+                    "Tiny \"Translator\"" => "小さな「翻訳機」\"引用\"",
+                    "Hello," => "こんにちは、",
+                    "First line\nSecond line" => "一行目\n二行目\t終わり",
+                    "One" => "一",
+                    "Two\\Three" => "二\\三",
+                    "Last" => "最後",
+                    other => panic!("not to be translated: {other:?}"),
+                }
+                .into(),
+            )
+        });
+        let format = Format::Json {
+            untranslated_keys: vec!["id".into()],
+        };
+        let (outcome, shown, updates) = run_as(&mut fake, JSON, format);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(
+            shown,
+            r#"{
+  "app": {
+    "title": "小さな「翻訳機」\"引用\"",
+    "greeting": "こんにちは、 ",
+    "id": "home",
+    "lines": "一行目\n二行目\t終わり"
+  },
+  "count": 3,
+  "ratio": 1.50,
+  "enabled": true,
+  "missing": null,
+  "items": ["一", 2, "", "42", {"id": "x", "label": "二\\三"}],
+  "zeta": "最後"
+}"#
+        );
+        // The translation reads as JSON, with the original's keys, types and nesting.
+        let original: serde_json::Value = serde_json::from_str(JSON).unwrap();
+        let translated: serde_json::Value = serde_json::from_str(&shown).unwrap();
+        assert_eq!(translated["app"]["title"], "小さな「翻訳機」\"引用\"");
+        assert_eq!(translated["app"]["lines"], "一行目\n二行目\t終わり");
+        assert_eq!(translated["items"][4]["label"], "二\\三");
+        for (key, value) in
+            ["count", "ratio", "enabled", "missing"].map(|key| (key, &original[key]))
+        {
+            assert_eq!(&translated[key], value, "{key}");
+        }
+        assert_eq!(translated["app"]["id"], "home");
+        assert_eq!(translated["items"][1], 2);
+        // Every update the screen was sent keeps the strings escaped, as they stream in.
+        assert!(updates.iter().all(|update| !update.contains("\n二行目")));
+    }
+
+    #[test]
+    fn a_long_json_string_is_cut_at_sentences_and_its_joints_escaped() {
+        let mut fake = Fake::new(bracket);
+        let sentences: Vec<String> = (0..60)
+            .map(|i| format!("Sentence number {i} here."))
+            .collect();
+        let value = sentences.join("\n");
+        let text = format!("{{\"long\": {}}}", serde_json::to_string(&value).unwrap());
+        let format = Format::Json {
+            untranslated_keys: Vec::new(),
+        };
+        let (outcome, shown, _) = run_as(&mut fake, &text, format);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert!(fake.prompts.len() >= 2);
+        let translated: serde_json::Value = serde_json::from_str(&shown).unwrap();
+        let long = translated["long"].as_str().unwrap();
+        assert!(long.starts_with("[Sentence number 0 here."));
+        assert_eq!(long.matches('\n').count(), 59);
+    }
+
+    #[test]
+    fn a_text_that_is_not_json_fails_before_anything_is_sent() {
+        let mut fake = Fake::new(bracket);
+        let format = Format::Json {
+            untranslated_keys: Vec::new(),
+        };
+        let (outcome, shown, updates) = run_as(&mut fake, "{\"a\": \"b\",}", format);
+        assert!(outcome.unwrap_err().starts_with("not JSON: "));
+        assert_eq!(shown, "");
+        assert!(updates.is_empty());
+        assert!(fake.prompts.is_empty());
+    }
+
+    #[test]
+    fn formats_are_named_as_the_screen_names_them() {
+        let keys = vec!["id".to_owned()];
+        assert_eq!(Format::from_name("text", keys.clone()), Some(Format::Text));
+        assert_eq!(
+            Format::from_name("markdown", keys.clone()),
+            Some(Format::Markdown)
+        );
+        assert_eq!(
+            Format::from_name("json", keys.clone()),
+            Some(Format::Json {
+                untranslated_keys: keys.clone()
+            })
+        );
+        assert_eq!(Format::from_name("html", keys), None);
     }
 }

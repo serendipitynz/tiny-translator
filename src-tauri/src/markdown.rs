@@ -370,6 +370,7 @@ mod tests {
                         Lines::Keep(prefix) => format!(" keep {prefix:?}"),
                         Lines::Join => " join".to_owned(),
                         Lines::Cell => " cell".to_owned(),
+                        Lines::Json => " json".to_owned(),
                     };
                     Some(format!("[{}]{lines}", unit.text))
                 }

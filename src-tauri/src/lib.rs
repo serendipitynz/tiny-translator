@@ -1,6 +1,7 @@
 mod clipboard;
 mod document;
 mod engine;
+mod json;
 mod language;
 mod markdown;
 mod repetition;
@@ -94,8 +95,10 @@ fn detect_language(text: String) -> Option<&'static str> {
     language::detect(&text)
 }
 
-/// Translates `text`, read as `format` (`"text"` or `"markdown"`), into `target` 翻訳単位 by 翻訳単位
-/// (doc-1 §7.1, §7.3), and answers `"done"` or `"stopped"`. The translation goes to `on_update` as it is generated, as `["append", text]` to add
+/// Translates `text`, read as `format` (`"text"`, `"markdown"` or `"json"`), into `target` 翻訳単位
+/// by 翻訳単位 (doc-1 §7.1, §7.3), and answers `"done"` or `"stopped"`. JSON leaves the values under
+/// `untranslated_keys` (翻訳しないキー) as they are, and fails when `text` is not JSON. The
+/// translation goes to `on_update` as it is generated, as `["append", text]` to add
 /// at the end or `["replace", text]` for the whole translation so far. Waits for the engine to
 /// start when it is 停止中, and keeps it from being released until the translation ends.
 #[tauri::command]
@@ -103,12 +106,13 @@ async fn translate(
     app: AppHandle,
     text: String,
     format: String,
+    untranslated_keys: Vec<String>,
     target: String,
     source: Option<String>,
     on_update: Channel<(&'static str, String)>,
 ) -> Result<&'static str, String> {
-    let format =
-        document::Format::from_name(&format).ok_or_else(|| format!("unknown format: {format}"))?;
+    let format = document::Format::from_name(&format, untranslated_keys)
+        .ok_or_else(|| format!("unknown format: {format}"))?;
     // Registered before anything waits, so a stop pressed while the engine is still loading
     // already reaches this translation.
     let cancel = app.state::<Translator>().begin();
@@ -128,7 +132,7 @@ async fn translate(
             document::translate(
                 &mut model,
                 &text,
-                format,
+                &format,
                 &target,
                 source.as_deref(),
                 |update| {

@@ -11,7 +11,12 @@
   } from "./lib/languages";
   import { copyText, launchClipboard, onLaunchedAgain, pasteClipboard } from "./lib/clipboard";
   import { isCopyTranslationShortcut, isTranslateShortcut } from "./lib/shortcuts";
-  import { detectLanguage, stopTranslation, translate as translateText } from "./lib/translate";
+  import {
+    DEFAULT_UNTRANSLATED_KEYS,
+    detectLanguage,
+    stopTranslation,
+    translate as translateText,
+  } from "./lib/translate";
   import { announce } from "./lib/ui/announce";
   import Button from "./lib/ui/Button.svelte";
   import IconButton from "./lib/ui/IconButton.svelte";
@@ -88,6 +93,7 @@
       const request = {
         text,
         format: "text" as const,
+        untranslatedKeys: DEFAULT_UNTRANSLATED_KEYS,
         ...promptLanguages(sourceSelected, targetSelected, detected, DEFAULT_PRIORITIES),
       };
       await translateText(request, (text) => {
