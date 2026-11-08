@@ -1115,6 +1115,26 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
     }
 
     #[test]
+    fn a_url_the_untagged_try_extended_keeps_the_original() {
+        let translate_to = |url: &'static str| {
+            move |input: &str| {
+                if input.contains('<') {
+                    Reply::Text("タグなし".into())
+                } else {
+                    Reply::Text(format!("今 {url} を見る。"))
+                }
+            }
+        };
+        let text = "Visit https://example.com now.";
+        let mut fake = Fake::new(translate_to("https://example.com/ja"));
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, text);
+        let mut fake = Fake::new(translate_to("https://example.com"));
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, "今 https://example.com を見る。");
+    }
+
+    #[test]
     fn a_collapsed_link_that_ends_a_unit_comes_back_once() {
         let text = "Go [Home][]\n\n[home]: /h\n";
         let mut fake = Fake::new(shout);

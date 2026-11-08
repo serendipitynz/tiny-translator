@@ -163,7 +163,7 @@ impl Tagged {
         let kept = || self.elements.iter().filter(|e| e.kind == Kind::Kept);
         kept().all(|element| {
             let wanted = kept().filter(|other| other.open == element.open).count();
-            translation.matches(element.open.as_str()).count() >= wanted
+            whole_occurrences(translation, &element.open) >= wanted
         })
     }
 
@@ -247,6 +247,54 @@ impl Tagged {
         write(&mut out, rest);
         Some(out)
     }
+}
+
+/// How many times `original` stands in `text` whole: a URL that the text goes on with
+/// (`https://example.com/ja` for `https://example.com`) is another URL. Only an original that ends
+/// (or starts) with a letter, a digit or `/` can be continued; one between delimiters, such as
+/// inline code in backquotes, cannot.
+fn whole_occurrences(text: &str, original: &str) -> usize {
+    let open_ended = |c: char| c.is_ascii_alphanumeric() || c == '/';
+    text.match_indices(original)
+        .filter(|&(at, _)| {
+            let continued_before = original.starts_with(open_ended)
+                && text[..at].chars().next_back().is_some_and(open_ended);
+            let continued_after =
+                original.ends_with(open_ended) && continues(&text[at + original.len()..]);
+            !continued_before && !continued_after
+        })
+        .count()
+}
+
+/// Whether `rest` goes on with the URL or word before it: it has a character that a URL takes
+/// before whitespace, a character outside ASCII, or its end. The punctuation that closes a
+/// sentence or a bracket around a URL does not count on its own (`https://a.dev).`).
+fn continues(rest: &str) -> bool {
+    for c in rest.chars() {
+        if !c.is_ascii_graphic() {
+            return false;
+        }
+        if !matches!(
+            c,
+            '.' | ','
+                | ':'
+                | ';'
+                | '!'
+                | '?'
+                | '\''
+                | '"'
+                | '*'
+                | '_'
+                | ')'
+                | ']'
+                | '<'
+                | '>'
+                | '`'
+        ) {
+            return true;
+        }
+    }
+    false
 }
 
 /// A tag as [`Builder`] writes them.
@@ -423,6 +471,12 @@ mod tests {
         assert!(!tagged.keeps_originals("`a` と https://x"));
         assert!(!tagged.keeps_originals("`a` と `A`、https://x"));
         assert!(!tagged.keeps_originals("`a` と `a`、https://y"));
+        // A URL the translation goes on with is another URL.
+        assert!(!tagged.keeps_originals("`a` と `a`、https://x/ja"));
+        assert!(!tagged.keeps_originals("`a` と `a`、https://x.jp"));
+        assert!(!tagged.keeps_originals("`a` と `a`、xhttps://x"));
+        assert!(tagged.keeps_originals("`a`と`a`、(https://x)."));
+        assert!(tagged.keeps_originals("`a`s and `a`, https://x... or"));
     }
 
     #[test]
