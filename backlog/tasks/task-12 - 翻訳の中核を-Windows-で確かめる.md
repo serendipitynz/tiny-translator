@@ -1,10 +1,10 @@
 ---
 id: TASK-12
 title: 翻訳の中核を Windows で確かめる
-status: In Review
+status: Done
 assignee: []
-created_date: 2026-11-05 19:41
-updated_date: '2026-11-08T01:45:00Z'
+created_date: '2026-11-05 19:41'
+updated_date: '2026-11-08 02:07'
 labels: []
 milestone: m-2
 dependencies:
@@ -68,4 +68,6 @@ Windows の Vulkan 版 llama-server で、m-2 の機能が macOS と同じに動
 - GPU 機では mmap した GGUF が RAM にも残る (2B で利用可能メモリが 2.1 GB 減る)。-lm none で 0.4 GB に減り、速度は変わらなかった (doc-1 §4.5)。Windows で -lm none を採るかはオーナーの判断を待つ。
 - exe を置いた直後の最初の起動では読み込みと最初の翻訳が数秒遅い (doc-1 §4.5)。原因は確かめていない。
 - 開発環境の注意: この PC では pnpm が fnm のシェル設定からしか入らず、Tauri の beforeBuildCommand から見えなかった (corepack の pnpm を PATH に足して回避)。
+
+- Windows で -lm none を採るかは、採らないことにした (オーナー判断 2026-11-08)。アプリの引数は macOS と同じ既定 (mmap) のまま。
 <!-- SECTION:NOTES:END -->
