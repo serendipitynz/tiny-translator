@@ -226,7 +226,9 @@ fn unit(
         }
         k += 1;
     }
-    written(&mut b, &text[cursor.min(end)..end]);
+    // The `[]` of a `[label][]` that ends the block lies past the last event.
+    let end = end.max(cursor);
+    written(&mut b, &text[cursor..end]);
 
     if !b.has_words() {
         return None;

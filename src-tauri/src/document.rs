@@ -1023,6 +1023,23 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
     }
 
     #[test]
+    fn a_collapsed_link_that_ends_a_unit_comes_back_once() {
+        let text = "Go [Home][]\n\n[home]: /h\n";
+        let mut fake = Fake::new(shout);
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, "GO [HOME][Home]\n\n[home]: /h\n");
+        let mut fake = Fake::new(|input| {
+            if input.contains('<') {
+                Reply::Text("GO HOME".into())
+            } else {
+                shout(input)
+            }
+        });
+        let (_, shown, _) = run_as(&mut fake, text, Format::Markdown);
+        assert_eq!(shown, "GO HOME\n\n[home]: /h\n");
+    }
+
+    #[test]
     fn a_tagged_unit_that_repeats_itself_is_made_again_without_tags() {
         let mut fake = Fake::new(|input| {
             if input.contains("<em") {
