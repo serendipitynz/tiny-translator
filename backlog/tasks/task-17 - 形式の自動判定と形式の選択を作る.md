@@ -1,10 +1,10 @@
 ---
 id: TASK-17
 title: 形式の自動判定と形式の選択を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-09 02:02'
+updated_date: '2026-11-09 02:10'
 labels: []
 milestone: m-3
 dependencies:
