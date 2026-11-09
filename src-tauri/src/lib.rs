@@ -1,5 +1,6 @@
 mod clipboard;
 mod document;
+mod download;
 mod engine;
 mod format;
 mod history;
@@ -20,7 +21,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clipboard::LaunchMemory;
-use engine::{Engine, Status};
+use engine::{Engine, EngineState, Status};
 use history::History;
 use serde_json::{Value, json};
 use settings::{FileState, Settings};
@@ -59,6 +60,7 @@ pub fn run() {
             app.manage(Translator::default());
             app.manage(LaunchMemory::new(data_dir.join("launch-clipboard")));
             app.manage(open_history(&data_dir));
+            app.manage(Downloads::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -77,12 +79,18 @@ pub fn run() {
             settings_get,
             settings_save,
             models_list,
+            models_catalog,
+            model_download,
+            model_download_cancel,
             engine_memory
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| match event {
-            RunEvent::Exit => app.state::<Engine>().shutdown(),
+            RunEvent::Exit => {
+                app.state::<Downloads>().cancel();
+                app.state::<Engine>().shutdown();
+            }
             // Opening the app from Finder, the Dock or Spotlight while it runs does not start a
             // second process on macOS — the running one is asked to reopen instead.
             #[cfg(target_os = "macos")]
@@ -451,6 +459,111 @@ async fn engine_memory(app: AppHandle) -> Option<u64> {
 
 fn models_dir(app: &AppHandle) -> tauri::Result<PathBuf> {
     Ok(app.path().app_data_dir()?.join("models"))
+}
+
+/// The model fetch under way (doc-1 §10.4): one at a time, stopped by the screen or by app exit.
+#[derive(Default)]
+struct Downloads(Mutex<Option<Arc<download::Job>>>);
+
+impl Downloads {
+    fn lock(&self) -> MutexGuard<'_, Option<Arc<download::Job>>> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn cancel(&self) {
+        if let Some(job) = self.lock().as_ref() {
+            job.cancel();
+        }
+    }
+}
+
+/// `{ dir, models }`: the models directory, and the models the app can fetch (doc-1 §10.4) as
+/// `{ name, size, repo, bytes, present, partial }` — whether the directory already has it, and how many
+/// bytes of it an earlier fetch left to resume from.
+#[tauri::command]
+fn models_catalog(app: AppHandle) -> Result<Value, String> {
+    let dir = models_dir(&app).map_err(|err| err.to_string())?;
+    let models: Vec<Value> = download::CATALOG
+        .iter()
+        .map(|model| {
+            let partial = fs::metadata(download::part_path(&dir, model.name))
+                .map(|meta| meta.len())
+                .unwrap_or(0);
+            json!({
+                "name": model.name,
+                "size": model.size,
+                "repo": model.repo,
+                "bytes": model.bytes,
+                "present": dir.join(model.name).exists(),
+                "partial": partial,
+            })
+        })
+        .collect();
+    Ok(json!({ "dir": dir.to_string_lossy(), "models": models }))
+}
+
+/// Fetches the catalog's model `name` into the models directory, sending `{ phase: "fetching" |
+/// "verifying", bytes }` as it goes. Answers `"done"`, or `"cancelled"` when
+/// [`model_download_cancel`] stopped it; an engine that could not start for want of a model is
+/// started with the new one.
+#[tauri::command]
+async fn model_download(
+    app: AppHandle,
+    name: String,
+    progress: Channel<Value>,
+) -> Result<&'static str, String> {
+    // Off the async runtime: it waits for curl and reads the whole file to hash it.
+    tauri::async_runtime::spawn_blocking(move || {
+        let model = download::catalogued(&name)
+            .ok_or_else(|| format!("{name} is not a model the app can fetch"))?;
+        let dir = models_dir(&app).map_err(|err| err.to_string())?;
+        let downloads = app.state::<Downloads>();
+        let job = {
+            let mut current = downloads.lock();
+            if current.is_some() {
+                return Err("another model is being fetched".to_owned());
+            }
+            let job = Arc::new(download::Job::default());
+            *current = Some(Arc::clone(&job));
+            job
+        };
+        let outcome = download::fetch(
+            &job,
+            &download::Fetcher::system(),
+            &model.url(),
+            model.expected(),
+            &dir,
+            model.name,
+            &mut |phase, bytes| {
+                let phase = match phase {
+                    download::Phase::Fetching => "fetching",
+                    download::Phase::Verifying => "verifying",
+                };
+                let _ = progress.send(json!({ "phase": phase, "bytes": bytes }));
+            },
+        );
+        downloads.lock().take();
+        match outcome? {
+            download::Outcome::Done => {
+                let engine = app.state::<Engine>();
+                let status = engine.status();
+                if status.state == EngineState::Stopped && status.error.is_some() {
+                    engine.start();
+                }
+                Ok("done")
+            }
+            download::Outcome::Cancelled => Ok("cancelled"),
+        }
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+fn model_download_cancel(downloads: State<'_, Downloads>) {
+    downloads.cancel();
 }
 
 #[tauri::command]
