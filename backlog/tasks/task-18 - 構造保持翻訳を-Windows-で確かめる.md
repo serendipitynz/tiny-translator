@@ -1,10 +1,10 @@
 ---
 id: TASK-18
 title: 構造保持翻訳を Windows で確かめる
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-09T05:16:00Z'
+updated_date: '2026-11-09 05:40'
 labels: []
 milestone: m-3
 dependencies:
