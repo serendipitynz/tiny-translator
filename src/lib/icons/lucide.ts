@@ -19,7 +19,11 @@ export type IconName =
   | "arrow-left-right"
   | "chevron-down"
   | "circle-check"
-  | "trash-2";
+  | "trash-2"
+  | "check"
+  | "circle-x"
+  | "ban"
+  | "info";
 
 export type IconNode = readonly (readonly ["path" | "rect" | "circle", Readonly<Record<string, string>>])[];
 
@@ -79,5 +83,20 @@ export const ICONS: Readonly<Record<IconName, IconNode>> = {
     ["path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" }],
     ["path", { d: "M3 6h18" }],
     ["path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }],
+  ],
+  check: [["path", { d: "M20 6 9 17l-5-5" }]],
+  "circle-x": [
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "m15 9-6 6" }],
+    ["path", { d: "m9 9 6 6" }],
+  ],
+  ban: [
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "M4.929 4.929 19.07 19.071" }],
+  ],
+  info: [
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "M12 16v-4" }],
+    ["path", { d: "M12 8h.01" }],
   ],
 };
