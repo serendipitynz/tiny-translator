@@ -174,8 +174,8 @@ fn launch_clipboard(app: AppHandle) -> (&'static str, Option<String>) {
     if !clipboard::readable_without_asking() {
         return ("not-allowed", None);
     }
-    match app.clipboard().read_text() {
-        Ok(text) if app.state::<LaunchMemory>().take(&text) => ("text", Some(text)),
+    match read_clipboard(&app) {
+        Some(text) if app.state::<LaunchMemory>().take(&text) => ("text", Some(text)),
         _ => ("none", None),
     }
 }
@@ -185,10 +185,18 @@ fn launch_clipboard(app: AppHandle) -> (&'static str, Option<String>) {
 #[tauri::command]
 async fn paste_clipboard(app: AppHandle) -> Option<String> {
     // Off the async runtime: where macOS asks, the read waits for the user's answer.
-    tauri::async_runtime::spawn_blocking(move || app.clipboard().read_text().ok())
+    tauri::async_runtime::spawn_blocking(move || read_clipboard(&app))
         .await
         .ok()
         .flatten()
+}
+
+/// The clipboard's text, with its lines broken as the source pane breaks them.
+fn read_clipboard(app: &AppHandle) -> Option<String> {
+    app.clipboard()
+        .read_text()
+        .ok()
+        .map(clipboard::with_lf_line_breaks)
 }
 
 #[tauri::command]
