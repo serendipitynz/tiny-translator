@@ -51,6 +51,14 @@ export function detectLanguage(text: string): Promise<string | null> {
   return invoke<string | null>("detect_language", { text });
 }
 
+/**
+ * The format `text` is read as when the format selector leaves it to the app (`detect_format` in
+ * `src-tauri/src/lib.rs`, doc-1 §7.2).
+ */
+export function detectFormat(text: string): Promise<Format> {
+  return invoke<Format>("detect_format", { text });
+}
+
 /** Stops the running translation, whose `translate` then resolves to "stopped". */
 export function stopTranslation(): Promise<void> {
   return invoke("stop_translation");

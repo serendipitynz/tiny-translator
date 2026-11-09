@@ -10,10 +10,13 @@
     TARGET_OPTIONS,
   } from "./lib/languages";
   import { copyText, launchClipboard, onLaunchedAgain, pasteClipboard } from "./lib/clipboard";
+  import { formatOptions } from "./lib/formats";
   import { isCopyTranslationShortcut, isTranslateShortcut } from "./lib/shortcuts";
   import {
     DEFAULT_UNTRANSLATED_KEYS,
+    detectFormat,
     detectLanguage,
+    type Format,
     stopTranslation,
     translate as translateText,
   } from "./lib/translate";
@@ -29,6 +32,8 @@
   let target = $state("");
   let sourceLanguage = $state(AUTO);
   let targetLanguage = $state(AUTO);
+  /** The format selector's choice: AUTO, or the Format to read the source as (doc-1 §7.2). */
+  let sourceFormat = $state(AUTO);
   let translating = $state(false);
   /** Why the last translation, paste or copy could not be made, shown until the next one starts. */
   let failure = $state<string | null>(null);
@@ -47,6 +52,13 @@
   let detection = $state<{ language: string | null } | null>(null);
   /** Counts detections, so an answer that arrives after a newer one was asked for is dropped. */
   let detecting = 0;
+  /**
+   * The format detected last from a source that is not blank. Detected whichever format is chosen,
+   * so 自動 in the selector's list says what it would read the source as.
+   */
+  let formatDetection = $state<Format | null>(null);
+  /** Counts format detections, as `detecting` does language ones. */
+  let detectingFormat = 0;
 
   // Long enough that a word typed at speed is detected once, short enough to read as immediate.
   const DETECT_DELAY_MS = 200;
@@ -70,6 +82,25 @@
     return () => clearTimeout(timer);
   });
 
+  $effect(() => {
+    const text = source;
+    if (text.trim() === "") {
+      return;
+    }
+    const id = ++detectingFormat;
+    const timer = setTimeout(async () => {
+      try {
+        const format = await detectFormat(text);
+        if (id === detectingFormat) {
+          formatDetection = format;
+        }
+      } catch {
+        // The selector keeps the last answer; translating detects again and reports its own failure.
+      }
+    }, DETECT_DELAY_MS);
+    return () => clearTimeout(timer);
+  });
+
   async function translate() {
     const id = ++current;
     translating = true;
@@ -78,10 +109,14 @@
     const text = source;
     const sourceSelected = sourceLanguage;
     const targetSelected = targetLanguage;
+    const formatSelected = sourceFormat;
     try {
-      // Detected again from the text being translated, not taken from the label, whose detection
+      // Detected again from the text being translated, not taken from the labels, whose detection
       // may still be waiting out its delay.
-      const detected = sourceSelected === AUTO ? await detectLanguage(text) : null;
+      const [detected, format] = await Promise.all([
+        sourceSelected === AUTO ? detectLanguage(text) : null,
+        formatSelected === AUTO ? detectFormat(text) : (formatSelected as Format),
+      ]);
       if (id !== current) {
         return;
       }
@@ -89,10 +124,13 @@
         ++detecting;
         detection = { language: detected };
       }
-      // Read as text until the screen offers the choice of format (doc-1 §7.2).
+      if (formatSelected === AUTO) {
+        ++detectingFormat;
+        formatDetection = format;
+      }
       const request = {
         text,
-        format: "text" as const,
+        format,
         untranslatedKeys: DEFAULT_UNTRANSLATED_KEYS,
         ...promptLanguages(sourceSelected, targetSelected, detected, DEFAULT_PRIORITIES),
       };
@@ -252,15 +290,23 @@
         {#snippet children(headingId)}
           <div class="source-field">
             <TextArea bind:value={source} labelledby={headingId} placeholder="翻訳する文を入力" />
-            {#if sourceLanguage === AUTO && source.trim() !== "" && detection !== null}
-              <p class="detection">{detectionLabel(detection.language)}</p>
-            {:else if launchUnread && source === ""}
+            {#if launchUnread && source === ""}
               <p class="launch-hint">
                 起動時にクリップボードを翻訳するには、システム設定の「プライバシーとセキュリティ」にある「ほかのアプリからのペースト」で
                 tiny-translator を許可してください。一覧に無いときは、先に貼り付けボタンを一度押して確認に答えると並びます。⌘V
                 でも貼り付けられます。
               </p>
             {/if}
+            <div class="source-reading">
+              <Select
+                label="形式"
+                options={formatOptions(source.trim() === "" ? null : formatDetection)}
+                bind:value={sourceFormat}
+              />
+              {#if sourceLanguage === AUTO && source.trim() !== "" && detection !== null}
+                <p class="detection">{detectionLabel(detection.language)}</p>
+              {/if}
+            </div>
           </div>
         {/snippet}
       </Panel>
@@ -362,20 +408,31 @@
     min-inline-size: 0;
   }
 
-  // doc-1 §8.1: what the app made of the source sits under it, inside the pane.
+  // doc-1 §8.1: how the source is read — its format and language — sits under it, inside the pane.
   .source-field {
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto;
     min-block-size: 0;
   }
 
+  .source-reading,
+  .launch-hint {
+    padding: var(--snz-space-xs) var(--snz-space-md);
+    border-block-start: var(--snz-border-line) solid var(--snz-line-divider);
+  }
+
+  .source-reading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--snz-space-xs) var(--snz-space-md);
+  }
+
   .detection,
   .launch-hint {
     margin: 0;
-    padding: var(--snz-space-xs) var(--snz-space-md);
     font-size: var(--snz-font-size-small);
     color: var(--snz-fg-muted);
-    border-block-start: var(--snz-border-line) solid var(--snz-line-divider);
   }
 
   .actions {
