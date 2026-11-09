@@ -41,9 +41,18 @@ pub fn segments(text: &str) -> Vec<Segment<'_>> {
             out.run(&items[start..i]);
             continue;
         }
-        if let Item::Start { values, .. } = &items[i] {
+        if let Item::Start { name, values, .. } = &items[i] {
             for value in values {
                 out.attribute(value.clone());
+            }
+            // The title's text is read as text whatever it holds (`<title><b> tag</title>`),
+            // which reading the 翻訳単位 again on its own, as a run is, would not do.
+            if name == "title"
+                && let Some(text @ Item::Text { .. }) = items.get(i + 1)
+            {
+                out.text_only(text);
+                i += 2;
+                continue;
             }
         }
         i = past(&items, i);
@@ -344,6 +353,27 @@ impl<'a> Out<'a> {
                 self.attribute(Value { range, ..value });
             }
         }
+    }
+
+    /// A text item as a 翻訳単位 without tags, unless it has nothing to translate.
+    fn text_only(&mut self, item: &Item) {
+        let Item::Text { range, words: true } = item else {
+            return;
+        };
+        let written = &self.text[range.clone()];
+        let start = range.start + leading_whitespace(written);
+        let end = range.end - trailing_whitespace(written);
+        let original = &self.text[start..end];
+        self.segments
+            .push(Segment::Kept(&self.text[self.kept_from..start]));
+        self.segments.push(Segment::Unit(Unit {
+            text: Cow::Owned(lines(original)),
+            original,
+            tags: None,
+            lines: Lines::Keep(indent(original)),
+            attributes: Vec::new(),
+        }));
+        self.kept_from = end;
     }
 
     /// An attribute value as a 翻訳単位 of its own. One written without quotes gets them, since
@@ -774,6 +804,14 @@ mod tests {
             escape_attribute(&mut out, c, '"');
         }
         assert_eq!(out, "a&quot;b'c d");
+    }
+
+    #[test]
+    fn a_title_is_text_whatever_it_holds() {
+        assert_eq!(
+            shape("<title> <textarea>の使い方 </title><title>&nbsp;</title><title></title>"),
+            "<title> [<textarea>の使い方] </title><title>&nbsp;</title><title></title>"
+        );
     }
 
     #[test]
