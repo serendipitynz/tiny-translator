@@ -13,7 +13,8 @@
   import { formatOptions } from "./lib/formats";
   import { type HistoryEntry, restore } from "./lib/history";
   import HistoryModal from "./HistoryModal.svelte";
-  import { loadSettings, priorities, type Settings } from "./lib/settings";
+  import { listModels, loadSettings, priorities, type Settings } from "./lib/settings";
+  import ModelFetchModal from "./ModelFetchModal.svelte";
   import SettingsModal from "./SettingsModal.svelte";
   import { isCopyTranslationShortcut, isTranslateShortcut } from "./lib/shortcuts";
   import {
@@ -27,6 +28,7 @@
   import { announce } from "./lib/ui/announce";
   import Button from "./lib/ui/Button.svelte";
   import IconButton from "./lib/ui/IconButton.svelte";
+  import Notice from "./lib/ui/Notice.svelte";
   import Panel from "./lib/ui/Panel.svelte";
   import Select from "./lib/ui/Select.svelte";
   import TextArea from "./lib/ui/TextArea.svelte";
@@ -293,6 +295,24 @@
   }
 
   let settingsOpen = $state(false);
+
+  /**
+   * The models directory while it holds no GGUF, so the screen offers to fetch one (doc-1 §10.4);
+   * null once it has one, or when it could not be read (translating then says why).
+   */
+  let missingModelsIn = $state<string | null>(null);
+  let fetchOpen = $state(false);
+
+  async function checkModels() {
+    try {
+      const listed = await listModels();
+      missingModelsIn = listed.models.length === 0 ? listed.dir : null;
+    } catch {
+      missingModelsIn = null;
+    }
+  }
+
+  void checkModels();
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -306,7 +326,16 @@
     </div>
   </header>
 
-  <main>
+  <main class:missing-model={missingModelsIn !== null}>
+    {#if missingModelsIn !== null}
+      <div class="missing-model-notice">
+        <Notice
+          level="degraded"
+          words={`翻訳に使うモデルがありません。モデルを入手するか、GGUF を ${missingModelsIn} に置いてください。`}
+        />
+        <Button label="モデルを入手" variant="primary" onpress={() => (fetchOpen = true)} />
+      </div>
+    {/if}
     <div class="directions">
       <div class="source-direction">
         <Select label="翻訳元" options={SOURCE_OPTIONS} bind:value={sourceLanguage} />
@@ -384,7 +413,22 @@
 {#if settingsOpen}
   <SettingsModal
     onsaved={(saved) => (settings = saved)}
-    onclose={() => (settingsOpen = false)}
+    onclose={() => {
+      settingsOpen = false;
+      // The settings screen can fetch a model too.
+      void checkModels();
+    }}
+    notify={(words) => toast.show(words)}
+  />
+{/if}
+
+{#if fetchOpen}
+  <ModelFetchModal
+    onfetched={() => {
+      fetchOpen = false;
+      void checkModels();
+    }}
+    onclose={() => (fetchOpen = false)}
     notify={(words) => toast.show(words)}
   />
 {/if}
@@ -450,6 +494,21 @@
 
   .panes {
     min-block-size: 0;
+  }
+
+  main.missing-model {
+    grid-template-rows: auto auto minmax(min-content, 1fr) auto;
+  }
+
+  .missing-model-notice {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--snz-space-sm);
+
+    > :global(.notice) {
+      flex: 1 1 20rem;
+    }
   }
 
   .source-direction {

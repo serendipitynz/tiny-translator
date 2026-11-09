@@ -41,6 +41,7 @@
   import Panel from "./lib/ui/Panel.svelte";
   import Select from "./lib/ui/Select.svelte";
   import TextArea from "./lib/ui/TextArea.svelte";
+  import ModelFetchModal from "./ModelFetchModal.svelte";
 
   interface Props {
     /** The settings are in effect: saved, or for this launch only when saving failed (doc-7 §5.3). */
@@ -129,17 +130,29 @@
       loadFailure = `設定を読み込めませんでした: ${error}`;
       return;
     }
+    await readModels();
+  }
+
+  async function readModels() {
     try {
       const listed = await listModels();
+      const first = models === null;
       models = listed;
-      modelShown = saved?.model ?? listed.chosen ?? "";
-      modelValue = modelShown;
+      modelsFailure = null;
+      // A list read again after a fetch leaves the selector as the user set it, unless it had
+      // nothing to show.
+      if (first || modelValue === "") {
+        modelShown = saved?.model ?? listed.chosen ?? "";
+        modelValue = modelShown;
+      }
     } catch (error) {
       modelsFailure = `モデルの一覧を読み込めませんでした: ${error}`;
     }
   }
 
   void load();
+
+  let fetchOpen = $state(false);
 
   $effect(() => watchEngine((status) => (engine = status)));
 
@@ -318,7 +331,7 @@
             {:else if models !== null && models.models.length === 0}
               <Notice
                 level="degraded"
-                words={`モデルの GGUF がありません。${models.dir} に置くと、次の翻訳から使えます。`}
+                words={`モデルの GGUF がありません。モデルを入手するか、${models.dir} に置くと、次の翻訳から使えます。`}
               />
             {:else if models !== null}
               {#if missingModel !== null}
@@ -331,6 +344,9 @@
               <p class="hint">
                 {models.dir} にある GGUF から選びます。括弧の中のサイズが、読み込んだときのメモリ使用量の目安です。保存すると、翻訳エンジンが選んだモデルを読み込み直します。
               </p>
+            {/if}
+            {#if models !== null}
+              <Button label="モデルを入手" onpress={() => (fetchOpen = true)} />
             {/if}
             <Select
               label="自動解放までの時間"
@@ -390,6 +406,17 @@
     <Button label="保存" busyLabel="保存中…" variant="primary" busy={saving} disabledReason={blocker} onpress={save} />
   {/snippet}
 </Modal>
+
+{#if fetchOpen}
+  <ModelFetchModal
+    onfetched={() => {
+      fetchOpen = false;
+      void readModels();
+    }}
+    onclose={() => (fetchOpen = false)}
+    {notify}
+  />
+{/if}
 
 {#if confirmingDiscard}
   <Modal heading="変更を破棄しますか" onclose={() => (confirmingDiscard = false)}>

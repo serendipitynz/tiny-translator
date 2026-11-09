@@ -30,7 +30,9 @@ Vulkan SDK (`winget install KhronosGroup.VulkanSDK`) が要る。CMake は PATH 
 powershell -ExecutionPolicy Bypass -File scripts\build-llama-server.ps1
 ```
 
-モデルの GGUF (既定は `plamo-3-translate-2b-Q4_K_M.gguf`) は、アプリデータディレクトリの `models/` に置く
+モデルの GGUF (既定は `plamo-3-translate-2b-Q4_K_M.gguf`) は、アプリの「モデルを入手」で Hugging Face の
+`pfnet/plamo-3-translate-*-GGUF` から取得する (PLaMo Community License への同意と SHA-256 の照合を伴う)。
+ネットワークの無い機械では、GGUF をアプリデータディレクトリの `models/` に手で置いてもよい
 (macOS では `~/Library/Application Support/com.serendipitynz.tiny-translator/models/`、Windows では
 `%APPDATA%\com.serendipitynz.tiny-translator\models\`。シンボリックリンクでもよい)。
 翻訳エンジンのログは `llama-server.log` に出る (macOS では `~/Library/Logs/com.serendipitynz.tiny-translator/`、
