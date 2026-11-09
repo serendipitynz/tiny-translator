@@ -11,6 +11,8 @@
   } from "./lib/languages";
   import { copyText, launchClipboard, onLaunchedAgain, pasteClipboard } from "./lib/clipboard";
   import { formatOptions } from "./lib/formats";
+  import { type HistoryEntry, restore } from "./lib/history";
+  import HistoryModal from "./HistoryModal.svelte";
   import { isCopyTranslationShortcut, isTranslateShortcut } from "./lib/shortcuts";
   import {
     DEFAULT_UNTRANSLATED_KEYS,
@@ -250,8 +252,28 @@
     announce("原文をクリアしました");
   }
 
-  // Where later tasks connect their work: history (TASK-20) and settings (TASK-21).
-  function openHistory() {}
+  let historyOpen = $state(false);
+
+  // doc-1 §9. A translation still running is stopped first: what it would write is no longer what the
+  // screen is about.
+  function pickFromHistory(entry: HistoryEntry) {
+    const stopped = translating;
+    if (stopped) {
+      current += 1;
+      translating = false;
+      void stopTranslation();
+    }
+    const restored = restore(entry);
+    source = restored.source;
+    target = restored.target;
+    sourceLanguage = restored.sourceLanguage;
+    targetLanguage = restored.targetLanguage;
+    failure = null;
+    historyOpen = false;
+    announce(stopped ? "翻訳を停止して、翻訳履歴から戻しました" : "翻訳履歴から戻しました");
+  }
+
+  // Where TASK-21 connects the settings screen.
   function openSettings() {}
 </script>
 
@@ -261,7 +283,7 @@
   <header class="app-header">
     <h1>tiny-translator</h1>
     <div class="tools">
-      <IconButton icon="history" label="翻訳履歴" onpress={openHistory} />
+      <IconButton icon="history" label="翻訳履歴" onpress={() => (historyOpen = true)} />
       <IconButton icon="settings" label="設定" onpress={openSettings} />
     </div>
   </header>
@@ -336,6 +358,10 @@
     </div>
   </main>
 </div>
+
+{#if historyOpen}
+  <HistoryModal onpick={pickFromHistory} onclose={() => (historyOpen = false)} notify={(words) => toast.show(words)} />
+{/if}
 
 <Toast bind:this={toast} />
 

@@ -176,6 +176,12 @@ impl History {
         entries.collect()
     }
 
+    /// How many translations the history holds, whatever a search would narrow them to.
+    pub fn count(&self) -> rusqlite::Result<u32> {
+        self.conn
+            .query_row("SELECT count(*) FROM translations", [], |row| row.get(0))
+    }
+
     /// Deletes one translation; `false` when there was none with `id`.
     pub fn delete(&self, id: i64) -> rusqlite::Result<bool> {
         let deleted = self
@@ -231,12 +237,6 @@ fn like_pattern(term: &str) -> String {
 impl History {
     pub(crate) fn in_memory(limit: usize) -> History {
         History::with_connection(Connection::open_in_memory().unwrap(), limit).unwrap()
-    }
-
-    fn count(&self) -> i64 {
-        self.conn
-            .query_row("SELECT count(*) FROM translations", [], |row| row.get(0))
-            .unwrap()
     }
 
     fn indexed(&self) -> i64 {
@@ -443,7 +443,7 @@ mod tests {
                 .save(&record(&format!("source {n}"), &format!("訳文 {n}")))
                 .unwrap();
         }
-        assert_eq!(history.count(), 3);
+        assert_eq!(history.count().unwrap(), 3);
         assert_eq!(history.indexed(), 3);
         assert_eq!(
             sources(&history.search("").unwrap()),
@@ -460,7 +460,7 @@ mod tests {
         assert!(!history.delete(id).unwrap());
         assert!(history.search("Delete me").unwrap().is_empty());
         assert!(history.search("消して").unwrap().is_empty());
-        assert_eq!(history.count(), 3);
+        assert_eq!(history.count().unwrap(), 3);
         assert_eq!(history.indexed(), 3);
     }
 
@@ -479,6 +479,7 @@ mod tests {
         history.clear().unwrap();
         assert!(history.search("").unwrap().is_empty());
         assert!(history.search("天気").unwrap().is_empty());
+        assert_eq!(history.count().unwrap(), 0);
         assert_eq!(history.indexed(), 0);
     }
 }

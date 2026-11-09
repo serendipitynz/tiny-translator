@@ -66,6 +66,7 @@ pub fn run() {
             paste_clipboard,
             copy_text,
             history_search,
+            history_count,
             history_delete,
             history_clear
         ])
@@ -292,6 +293,12 @@ fn history_search(history: State<'_, HistoryState>, query: String) -> Result<Vec
             })
         })
         .collect())
+}
+
+/// How many translations 翻訳履歴 holds, so deleting them all can say how many go.
+#[tauri::command]
+fn history_count(history: State<'_, HistoryState>) -> Result<u32, String> {
+    history.with(|history| history.count())
 }
 
 /// Deletes one translation from 翻訳履歴; `false` when it was already gone.
