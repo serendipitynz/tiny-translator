@@ -12,7 +12,7 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd};
 
 use crate::document::{Lines, Segment, Unit};
 use crate::tags::Builder;
@@ -87,6 +87,41 @@ enum Block {
     Heading,
     Cell,
     Other,
+}
+
+/// What tells `text` apart as Markdown (doc-1 §7.2), read with the parser it would be translated
+/// by.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Signs {
+    /// How many headings written with `#`, lists and fenced code blocks it has. A heading
+    /// underlined with `-` or `=` is not counted: a plain-text mail's `--` before its signature
+    /// underlines the line above it.
+    pub syntax: usize,
+    /// Where its fenced code blocks and code spans are, whose content is an example rather than
+    /// the text's own markup.
+    pub code: Vec<Range<usize>>,
+}
+
+/// The [`Signs`] of `text`.
+pub fn signs(text: &str) -> Signs {
+    let mut signs = Signs::default();
+    for (event, range) in Parser::new_ext(text, options()).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Heading { .. })
+                if text[range.clone()].trim_start().starts_with('#') =>
+            {
+                signs.syntax += 1;
+            }
+            Event::Start(Tag::List(_)) => signs.syntax += 1,
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_))) => {
+                signs.syntax += 1;
+                signs.code.push(range);
+            }
+            Event::Code(_) => signs.code.push(range),
+            _ => {}
+        }
+    }
+    signs
 }
 
 fn is_inline(event: &Event) -> bool {
