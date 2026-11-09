@@ -133,6 +133,10 @@ impl Drop for Lease {
         let mut inner = self.shared.lock();
         inner.leases -= 1;
         if inner.leases == 0 && inner.state == EngineState::Ready {
+            if inner.reload_pending {
+                self.shared.restart(&mut inner);
+                return;
+            }
             // 自動解放までの時間 counts from the end of the last translation (doc-1 §1).
             inner.idle_since = Some(Instant::now());
             self.shared.changed.notify_all();
@@ -161,6 +165,9 @@ struct Inner {
     idle_since: Option<Instant>,
     /// `None` is 自動解放までの時間 = 0, "never release".
     idle_release: Option<Duration>,
+    /// Set by [`Engine::reload`] while a translation holds a lease: the engine starts again with
+    /// the newly chosen model once the last lease is dropped.
+    reload_pending: bool,
     shutting_down: bool,
 }
 
@@ -185,6 +192,7 @@ impl Engine {
                 leases: 0,
                 idle_since: None,
                 idle_release: Some(DEFAULT_IDLE_RELEASE),
+                reload_pending: false,
                 shutting_down: false,
             }),
             changed: Condvar::new(),
@@ -255,18 +263,35 @@ impl Engine {
     }
 
     /// Changes 自動解放までの時間; `None` never releases. Takes effect on the running engine too.
-    // The same condition as the tests' module: they are its only caller, and they run on Unix only.
-    #[cfg_attr(
-        not(all(test, unix)),
-        expect(
-            dead_code,
-            reason = "the settings screen (TASK-21) is the first caller"
-        )
-    )]
     pub fn set_idle_release(&self, after: Option<Duration>) {
         let mut inner = self.shared.lock();
         inner.idle_release = after;
         self.shared.changed.notify_all();
+    }
+
+    /// Starts the engine again so that it loads the model [`Spawn`] chooses now, after the settings
+    /// screen changed it (2026-11-09 owner decision: at once, not at the next translation). An
+    /// engine that is translating is restarted when the translation ends; a 停止中 one is left
+    /// stopped, since it was released to give its memory back.
+    pub fn reload(&self) {
+        let mut inner = self.shared.lock();
+        if inner.shutting_down {
+            return;
+        }
+        match inner.state {
+            EngineState::Stopped => {}
+            EngineState::Ready if inner.leases > 0 => inner.reload_pending = true,
+            EngineState::Ready | EngineState::Loading => self.shared.restart(&mut inner),
+        }
+    }
+
+    /// The engine process's memory use in bytes while it runs (doc-1 §4.5's メモリ使用量の目安):
+    /// its resident set on macOS, its working set on Windows. Both count the mmapped GGUF, which
+    /// is what the OS as a whole loses to the engine (doc-1 §4.5's measurements).
+    pub fn memory(&self) -> Option<u64> {
+        let pid = self.shared.lock().process.as_ref()?.child.id();
+        // Asked outside the lock: on Unix it runs `ps`, which the engine need not wait for.
+        process_memory(pid)
     }
 
     /// Ends the engine for good: on app exit.
@@ -303,6 +328,8 @@ impl Shared {
 
     fn start(self: &Arc<Self>, inner: &mut Inner) -> Result<(), String> {
         inner.start_id += 1;
+        // Whatever start this is loads the model chosen now, which is all a pending reload asked.
+        inner.reload_pending = false;
         if let Err(reason) = self.spawn_process(inner, 1) {
             inner.error = Some(reason.clone());
             (self.notify)(&inner.status());
@@ -351,6 +378,13 @@ impl Shared {
                 let _ = fs::remove_file(pid_file);
             }
         }
+    }
+
+    /// Stops the engine and starts it at once, for [`Engine::reload`].
+    fn restart(self: &Arc<Self>, inner: &mut Inner) {
+        self.stop(inner, None);
+        // A failed start is reported through the status, as at launch.
+        let _ = self.start(inner);
     }
 
     fn stop(&self, inner: &mut Inner, error: Option<String>) {
@@ -537,26 +571,51 @@ fn is_ok_status(head: &[u8]) -> bool {
     head.starts_with(b"HTTP/1.") && head.get(8..12) == Some(b" 200")
 }
 
-/// The GGUF the engine loads (doc-1 §10): the default model if it is in `dir`, otherwise the
-/// first GGUF by name. Choosing one is the settings screen's (TASK-21).
-pub fn choose_model(dir: &Path) -> io::Result<PathBuf> {
-    let mut models: Vec<PathBuf> = fs::read_dir(dir)?
+/// A GGUF in the models directory (doc-1 §10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFile {
+    pub name: String,
+    /// The file's size, which the settings screen gives as what the model will take in memory:
+    /// doc-1 §4.5 measured the engine's resident set at the GGUF's size plus about 0.2 GB.
+    pub bytes: u64,
+}
+
+/// The GGUFs in `dir`, by name. A symbolic link counts as the file it points to.
+pub fn list_models(dir: &Path) -> io::Result<Vec<ModelFile>> {
+    let mut models: Vec<ModelFile> = fs::read_dir(dir)?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|path| {
             path.extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
         })
+        .filter_map(|path| {
+            let bytes = fs::metadata(&path).ok()?.len();
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            Some(ModelFile { name, bytes })
+        })
         .collect();
-    models.sort();
-    let default = models
-        .iter()
-        .find(|path| path.file_name().is_some_and(|name| name == DEFAULT_MODEL));
-    default.or(models.first()).cloned().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("no GGUF in {}", dir.display()),
-        )
-    })
+    models.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(models)
+}
+
+/// The GGUF the engine loads (doc-1 §10): `preferred` (the settings screen's choice) when it is in
+/// `dir`, otherwise the default model if it is there, otherwise the first GGUF by name. A preferred
+/// model that has gone falls back rather than leaving the app unable to translate; the settings
+/// screen says it is missing.
+pub fn choose_model(dir: &Path, preferred: Option<&str>) -> io::Result<PathBuf> {
+    let models = list_models(dir)?;
+    let named = |name: &str| models.iter().find(|model| model.name == name);
+    preferred
+        .and_then(named)
+        .or_else(|| named(DEFAULT_MODEL))
+        .or(models.first())
+        .map(|model| dir.join(&model.name))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("no GGUF in {}", dir.display()),
+            )
+        })
 }
 
 /// 既定のモデル (doc-1 §4.4): 2B Q4_K_M, under the name Hugging Face publishes it as.
@@ -675,6 +734,68 @@ fn kill(pid: u32) {
     let _ = windowless("taskkill")
         .args(["/PID", &pid.to_string(), "/F"])
         .status();
+}
+
+/// A process's resident set in bytes, from `ps` (in KiB on both macOS and Linux).
+#[cfg(unix)]
+fn process_memory(pid: u32) -> Option<u64> {
+    let out = windowless("ps")
+        .args(["-p", &pid.to_string(), "-o", "rss="])
+        .output()
+        .ok()?;
+    let kib: u64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
+    Some(kib * 1024)
+}
+
+/// A process's working set in bytes.
+#[cfg(windows)]
+fn process_memory(pid: u32) -> Option<u64> {
+    use std::ffi::c_void;
+
+    // PROCESS_MEMORY_COUNTERS from psapi.h.
+    #[repr(C)]
+    #[derive(Default)]
+    struct Counters {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set_size: usize,
+        working_set_size: usize,
+        quota_peak_paged_pool_usage: usize,
+        quota_paged_pool_usage: usize,
+        quota_peak_non_paged_pool_usage: usize,
+        quota_non_paged_pool_usage: usize,
+        pagefile_usage: usize,
+        peak_pagefile_usage: usize,
+    }
+
+    // kernel32 exports GetProcessMemoryInfo as K32GetProcessMemoryInfo, so psapi need not be
+    // linked; declared by hand for the reason `image_path` gives.
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit_handle: i32, pid: u32) -> *mut c_void;
+        fn K32GetProcessMemoryInfo(process: *mut c_void, counters: *mut Counters, cb: u32) -> i32;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const PROCESS_VM_READ: u32 = 0x0010;
+
+    let size = std::mem::size_of::<Counters>() as u32;
+    let mut counters = Counters {
+        cb: size,
+        ..Counters::default()
+    };
+    // SAFETY: the handle is checked for null and closed before leaving the block; `counters` is a
+    // PROCESS_MEMORY_COUNTERS whose `cb` and the size passed both state its size.
+    let read = unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let read = K32GetProcessMemoryInfo(process, &mut counters, size) != 0;
+        CloseHandle(process);
+        read
+    };
+    read.then_some(counters.working_set_size as u64)
 }
 
 /// A `Command` that opens no console window on Windows, where a GUI app's child would otherwise get
@@ -1065,11 +1186,11 @@ mod tests {
     }
 
     #[test]
-    fn choose_model_prefers_the_default_then_name_order() {
+    fn choose_model_prefers_the_choice_then_the_default_then_name_order() {
         let dir = temp_path("models");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        assert!(choose_model(&dir).is_err());
+        assert!(choose_model(&dir, None).is_err());
         for name in [
             "notes.txt",
             "plamo-3-translate-8b-Q4_K_M.gguf",
@@ -1078,12 +1199,109 @@ mod tests {
             fs::write(dir.join(name), "").unwrap();
         }
         assert_eq!(
-            choose_model(&dir).unwrap(),
+            choose_model(&dir, None).unwrap(),
             dir.join("plamo-3-translate-0.8b-Q4_K_M.GGUF")
         );
         fs::write(dir.join(DEFAULT_MODEL), "").unwrap();
-        assert_eq!(choose_model(&dir).unwrap(), dir.join(DEFAULT_MODEL));
+        assert_eq!(choose_model(&dir, None).unwrap(), dir.join(DEFAULT_MODEL));
+        assert_eq!(
+            choose_model(&dir, Some("plamo-3-translate-8b-Q4_K_M.gguf")).unwrap(),
+            dir.join("plamo-3-translate-8b-Q4_K_M.gguf")
+        );
+        // A choice that has gone falls back as if none were made; so does a file that is no GGUF.
+        for gone in ["plamo-3-translate-31b.gguf", "notes.txt"] {
+            assert_eq!(
+                choose_model(&dir, Some(gone)).unwrap(),
+                dir.join(DEFAULT_MODEL)
+            );
+        }
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn list_models_gives_each_gguf_with_its_size_by_name() {
+        let dir = temp_path("model-list");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("b.gguf"), "12345").unwrap();
+        fs::write(dir.join("a.GGUF"), "1").unwrap();
+        fs::write(dir.join("c.txt"), "").unwrap();
+        std::os::unix::fs::symlink(dir.join("b.gguf"), dir.join("link.gguf")).unwrap();
+        std::os::unix::fs::symlink(dir.join("gone"), dir.join("dangling.gguf")).unwrap();
+        let file = |name: &str, bytes| ModelFile {
+            name: name.into(),
+            bytes,
+        };
+        assert_eq!(
+            list_models(&dir).unwrap(),
+            [file("a.GGUF", 1), file("b.gguf", 5), file("link.gguf", 5)]
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reload_restarts_an_idle_engine_at_once() {
+        let fake = Fake::new();
+        let engine = fake.engine(None);
+        engine.start();
+        wait_for(&engine, EngineState::Ready);
+        engine.reload();
+        wait_for(&engine, EngineState::Ready);
+        assert_eq!(fake.spawns.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            fake.states(),
+            [
+                EngineState::Loading,
+                EngineState::Ready,
+                EngineState::Stopped,
+                EngineState::Loading,
+                EngineState::Ready,
+            ]
+        );
+        engine.shutdown();
+    }
+
+    #[test]
+    fn reload_waits_for_the_translation_that_holds_the_engine() {
+        let fake = Fake::new();
+        let engine = fake.engine(None);
+        let lease = engine.acquire().unwrap();
+        engine.reload();
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(engine.status().state, EngineState::Ready);
+        assert_eq!(fake.spawns.load(Ordering::SeqCst), 1);
+        drop(lease);
+        wait_for(&engine, EngineState::Ready);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while fake.spawns.load(Ordering::SeqCst) < 2 {
+            assert!(Instant::now() < deadline, "never reloaded");
+            thread::sleep(Duration::from_millis(10));
+        }
+        wait_for(&engine, EngineState::Ready);
+        engine.shutdown();
+    }
+
+    #[test]
+    fn reload_leaves_a_released_engine_stopped() {
+        let fake = Fake::new();
+        let engine = fake.engine(None);
+        engine.reload();
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(engine.status().state, EngineState::Stopped);
+        assert_eq!(fake.spawns.load(Ordering::SeqCst), 0);
+        engine.shutdown();
+    }
+
+    #[test]
+    fn memory_is_known_only_while_the_process_runs() {
+        let fake = Fake::new();
+        let engine = fake.engine(None);
+        assert_eq!(engine.memory(), None);
+        engine.start();
+        wait_for(&engine, EngineState::Ready);
+        assert!(engine.memory().is_some_and(|bytes| bytes > 0));
+        engine.shutdown();
+        assert_eq!(engine.memory(), None);
     }
 
     #[test]
