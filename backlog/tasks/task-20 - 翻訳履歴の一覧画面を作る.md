@@ -1,10 +1,10 @@
 ---
 id: TASK-20
 title: 翻訳履歴の一覧画面を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-09 08:05'
+updated_date: '2026-11-09 09:44'
 labels: []
 milestone: m-4
 dependencies:
