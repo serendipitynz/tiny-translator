@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import indexHtml from "../index.html?raw";
 
+interface ColorScheme {
+  choose: (family: string, mode: string) => void;
+}
+
 const script = indexHtml.match(/<script id="color-scheme">([\s\S]*?)<\/script>/)?.[1];
 
 interface Run {
   attrs: Map<string, string>;
+  choose: (family: string, mode: string) => void;
   osReads: () => number;
   writes: string[];
   setOsDark: (dark: boolean) => void;
@@ -44,11 +49,19 @@ function boot(stored: Record<string, string> | "unreadable", osDark: boolean): R
       writes.push(key);
     },
   };
-  const window = { localStorage, matchMedia: () => query };
+  const window: { localStorage: typeof localStorage; matchMedia: () => typeof query; tinyColorScheme?: ColorScheme } = {
+    localStorage,
+    matchMedia: () => query,
+  };
   const document = { documentElement: { setAttribute: (name: string, value: string) => attrs.set(name, value) } };
   new Function("window", "document", script)(window, document);
+  const chosen = window.tinyColorScheme;
+  if (chosen === undefined) {
+    throw new Error("the script did not hand the settings screen its way to choose");
+  }
   return {
     attrs,
+    choose: (family, mode) => chosen.choose(family, mode),
     osReads: () => osReads,
     writes,
     setOsDark: (next) => {
@@ -110,5 +123,19 @@ describe("the color-scheme script in index.html", () => {
     run.setOsDark(true);
     expect(drawn(run)).toEqual(["standard", "light"]);
     expect(run.osReads()).toBe(0);
+  });
+
+  it("puts a choice made after launch into effect, and follows the OS by it", () => {
+    const run = boot({ colorMode: "auto" }, true);
+    run.choose("solarized", "light");
+    expect(drawn(run)).toEqual(["solarized", "light"]);
+    run.setOsDark(false);
+    run.setOsDark(true);
+    expect(drawn(run)).toEqual(["solarized", "light"]);
+    run.choose("standard", "auto");
+    expect(drawn(run)).toEqual(["standard", "dark"]);
+    run.setOsDark(false);
+    expect(drawn(run)).toEqual(["standard", "light"]);
+    expect(run.writes).toEqual([]);
   });
 });

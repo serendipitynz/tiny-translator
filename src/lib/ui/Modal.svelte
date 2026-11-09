@@ -122,6 +122,9 @@
     inset: 0;
     z-index: 800;
     display: grid;
+    // One track the size of the window less the padding: an auto track grows with the panel, and the
+    // panel's max-block-size would then never stop it at the window's height (doc-9 §6.6).
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
     place-items: center;
     padding: var(--snz-space-md);
   }

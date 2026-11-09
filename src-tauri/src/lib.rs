@@ -8,6 +8,7 @@ mod json;
 mod language;
 mod markdown;
 mod repetition;
+mod settings;
 mod tags;
 mod translate;
 mod units;
@@ -15,13 +16,14 @@ mod units;
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::{Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clipboard::LaunchMemory;
 use engine::{Engine, Status};
 use history::History;
 use serde_json::{Value, json};
+use settings::{FileState, Settings};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -48,10 +50,13 @@ pub fn run() {
         )
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
-            let engine = start_engine(app.handle())?;
-            app.manage(engine);
-            app.manage(Translator::default());
             let data_dir = app.path().app_data_dir()?;
+            fs::create_dir_all(&data_dir)?;
+            let settings = Arc::new(SettingsStore::load(&data_dir));
+            let engine = start_engine(app.handle(), Arc::clone(&settings))?;
+            app.manage(engine);
+            app.manage(settings);
+            app.manage(Translator::default());
             app.manage(LaunchMemory::new(data_dir.join("launch-clipboard")));
             app.manage(open_history(&data_dir));
             Ok(())
@@ -68,7 +73,11 @@ pub fn run() {
             history_search,
             history_count,
             history_delete,
-            history_clear
+            history_clear,
+            settings_get,
+            settings_save,
+            models_list,
+            engine_memory
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -312,6 +321,138 @@ fn history_clear(history: State<'_, HistoryState>) -> Result<(), String> {
     history.with(|history| history.clear())
 }
 
+/// The settings, and how their file stood, read at launch and changed by the settings screen. Held
+/// apart from the engine because the engine's [`engine::Spawn`] reads the chosen model on every
+/// start.
+struct SettingsStore {
+    path: PathBuf,
+    current: Mutex<(Settings, FileState)>,
+}
+
+impl SettingsStore {
+    fn load(data_dir: &std::path::Path) -> SettingsStore {
+        let path = data_dir.join("settings.json");
+        let loaded = settings::load(&path, now_millis());
+        if let FileState::MovedAside { to, reason } = &loaded.1 {
+            eprintln!(
+                "could not read the settings ({reason}); moved them to {}",
+                to.display()
+            );
+        } else if let Some(reason) = loaded.1.write_blocker() {
+            eprintln!("the settings will not be saved: {reason}");
+        }
+        SettingsStore {
+            path,
+            current: Mutex::new(loaded),
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, (Settings, FileState)> {
+        self.current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn get(&self) -> Settings {
+        self.lock().0.clone()
+    }
+}
+
+/// 自動解放までの時間 as the engine takes it: 0 minutes never releases (doc-1 §4.5).
+fn idle_release(minutes: u32) -> Option<Duration> {
+    (minutes > 0).then(|| Duration::from_secs(u64::from(minutes) * 60))
+}
+
+/// `{ settings, file }`: the settings as `settings::to_value` gives them, and how their file
+/// stands — `{ state: "read" | "missing" }`, `{ state: "moved", path, reason }` for a file that
+/// could not be read and was moved aside, `{ state: "unmovable", reason }` or `{ state: "newer",
+/// version }` for one that is not written.
+#[tauri::command]
+fn settings_get(store: State<'_, Arc<SettingsStore>>) -> Value {
+    let current = store.lock();
+    let file = match &current.1 {
+        FileState::Read => json!({ "state": "read" }),
+        FileState::Missing => json!({ "state": "missing" }),
+        FileState::MovedAside { to, reason } => {
+            json!({ "state": "moved", "path": to.to_string_lossy(), "reason": reason })
+        }
+        FileState::Unmovable { reason } => json!({ "state": "unmovable", "reason": reason }),
+        FileState::Newer { version } => json!({ "state": "newer", "version": version }),
+    };
+    json!({ "settings": settings::to_value(&current.0), "file": file })
+}
+
+/// Puts `settings` into effect at once and saves them. They stay in effect for this launch even
+/// when they cannot be saved (snz-design doc-7 §5.3); the error says why they were not.
+#[tauri::command]
+fn settings_save(
+    store: State<'_, Arc<SettingsStore>>,
+    engine: State<'_, Engine>,
+    settings: Value,
+) -> Result<(), String> {
+    apply_settings(&store, &engine, settings::from_value(&settings)?)
+}
+
+/// [`settings_save`] once the screen's value is read.
+fn apply_settings(
+    store: &SettingsStore,
+    engine: &Engine,
+    settings: Settings,
+) -> Result<(), String> {
+    // The lock is let go before the engine is touched: a reload spawns the engine at once, and the
+    // spawn reads the chosen model from this same store.
+    let (model_changed, write_blocker) = {
+        let mut current = store.lock();
+        let model_changed = current.0.model != settings.model;
+        current.0 = settings.clone();
+        (model_changed, current.1.write_blocker())
+    };
+    engine.set_idle_release(idle_release(settings.idle_release_minutes));
+    if model_changed {
+        engine.reload();
+    }
+    if let Some(reason) = write_blocker {
+        return Err(reason);
+    }
+    settings::save(&store.path, &settings).map_err(|err| err.to_string())?;
+    store.lock().1 = FileState::Read;
+    Ok(())
+}
+
+/// `{ dir, models, chosen }`: the models directory, the GGUFs in it as `{ name, bytes }` by name,
+/// and the name of the one the engine loads on its next start (null when there is none).
+#[tauri::command]
+fn models_list(app: AppHandle, store: State<'_, Arc<SettingsStore>>) -> Result<Value, String> {
+    let dir = models_dir(&app).map_err(|err| err.to_string())?;
+    let models = engine::list_models(&dir).map_err(|err| err.to_string())?;
+    let preferred = store.get().model;
+    let chosen = engine::choose_model(&dir, preferred.as_deref())
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        });
+    let models: Vec<Value> = models
+        .into_iter()
+        .map(|model| json!({ "name": model.name, "bytes": model.bytes }))
+        .collect();
+    Ok(json!({ "dir": dir.to_string_lossy(), "models": models, "chosen": chosen }))
+}
+
+/// The engine's memory use in bytes while it runs, or null (doc-1 §4.5's メモリ使用量の目安).
+#[tauri::command]
+async fn engine_memory(app: AppHandle) -> Option<u64> {
+    // Off the async runtime: on macOS it waits for `ps`.
+    tauri::async_runtime::spawn_blocking(move || app.state::<Engine>().memory())
+        .await
+        .ok()
+        .flatten()
+}
+
+fn models_dir(app: &AppHandle) -> tauri::Result<PathBuf> {
+    Ok(app.path().app_data_dir()?.join("models"))
+}
+
 #[tauri::command]
 fn stop_translation(translator: State<'_, Translator>) {
     translator.stop();
@@ -322,6 +463,10 @@ fn stop_translation(translator: State<'_, Translator>) {
 /// the user, so the clipboard was left unread.
 #[tauri::command]
 fn launch_clipboard(app: AppHandle) -> (&'static str, Option<String>) {
+    // Turned off in the settings: as if there were nothing, with no hint about macOS's permission.
+    if !app.state::<Arc<SettingsStore>>().get().launch_clipboard {
+        return ("none", None);
+    }
     if !clipboard::readable_without_asking() {
         return ("not-allowed", None);
     }
@@ -359,19 +504,23 @@ fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
 
 /// Starts the engine at app launch, so that loading overlaps the time the user takes to bring in
 /// the text to translate (doc-1 §5).
-fn start_engine(app: &AppHandle) -> Result<Engine, Box<dyn std::error::Error>> {
+fn start_engine(
+    app: &AppHandle,
+    settings: Arc<SettingsStore>,
+) -> Result<Engine, Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
-    let model_dir = data_dir.join("models");
+    let model_dir = models_dir(app)?;
     fs::create_dir_all(&model_dir)?;
     let log_dir = app.path().app_log_dir()?;
     fs::create_dir_all(&log_dir)?;
     let pid_file = data_dir.join("engine.pid");
     let program = sidecar_path()?;
+    let idle = idle_release(settings.get().idle_release_minutes);
 
     engine::kill_leftover(&pid_file, &program);
 
     let spawn: engine::Spawn = Box::new(move |port, api_key| {
-        let model = engine::choose_model(&model_dir)?;
+        let model = engine::choose_model(&model_dir, settings.get().model.as_deref())?;
         // Truncated on every start: the log is for looking into the run that just went wrong.
         let log = File::create(log_dir.join("llama-server.log"))?;
         let child = engine::windowless(&program)
@@ -394,6 +543,7 @@ fn start_engine(app: &AppHandle) -> Result<Engine, Box<dyn std::error::Error>> {
     });
 
     let engine = Engine::new(spawn, notify, Some(pid_file));
+    engine.set_idle_release(idle);
     engine.start();
     Ok(engine)
 }
@@ -497,5 +647,54 @@ mod tests {
     fn a_history_that_could_not_be_opened_leaves_the_translation_done() {
         let history = HistoryState(Mutex::new(Err("unreadable".into())));
         assert_eq!(run(Ok(Completion::Done), &history), Ok(Outcome::Done));
+    }
+
+    /// The engine's spawn reads the chosen model from the store, as the app's does; saving a new
+    /// model reloads a loading engine, which spawns at once.
+    #[cfg(unix)]
+    #[test]
+    fn saving_a_new_model_reloads_the_engine_without_waiting_on_the_settings() {
+        let dir =
+            std::env::temp_dir().join(format!("tiny-translator-apply-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(SettingsStore::load(&dir));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let (reader, models) = (Arc::clone(&store), Arc::clone(&seen));
+        let engine = Engine::new(
+            Box::new(move |_, _| {
+                models.lock().unwrap().push(reader.get().model);
+                // Never answers /health, so the engine stays 読み込み中.
+                let child = std::process::Command::new("sleep").arg("60").spawn()?;
+                Ok(engine::Spawned {
+                    child,
+                    model: "stand-in.gguf".into(),
+                })
+            }),
+            Box::new(|_| {}),
+            None,
+        );
+        engine.start();
+        let settings = Settings {
+            model: Some("other.gguf".into()),
+            ..Settings::default()
+        };
+        let (done, finished) = std::sync::mpsc::channel();
+        let (store_in, engine) = (Arc::clone(&store), Arc::new(engine));
+        let engine_in = Arc::clone(&engine);
+        std::thread::spawn(move || {
+            let _ = done.send(apply_settings(&store_in, &engine_in, settings));
+        });
+        let result = finished
+            .recv_timeout(Duration::from_secs(5))
+            .expect("saving the settings never returned");
+        assert_eq!(result, Ok(()));
+        assert_eq!(*seen.lock().unwrap(), [None, Some("other.gguf".to_owned())]);
+        assert_eq!(
+            settings::load(&store.path, 0).0.model.as_deref(),
+            Some("other.gguf")
+        );
+        engine.shutdown();
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

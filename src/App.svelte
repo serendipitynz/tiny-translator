@@ -13,6 +13,8 @@
   import { formatOptions } from "./lib/formats";
   import { type HistoryEntry, restore } from "./lib/history";
   import HistoryModal from "./HistoryModal.svelte";
+  import { loadSettings, priorities, type Settings } from "./lib/settings";
+  import SettingsModal from "./SettingsModal.svelte";
   import { isCopyTranslationShortcut, isTranslateShortcut } from "./lib/shortcuts";
   import {
     DEFAULT_UNTRANSLATED_KEYS,
@@ -65,6 +67,17 @@
   // Long enough that a word typed at speed is detected once, short enough to read as immediate.
   const DETECT_DELAY_MS = 200;
 
+  /** The settings in effect (TASK-21), or null while they are read or when they could not be. */
+  let settings = $state<Settings | null>(null);
+  // Translating waits for this, so 起動時のクリップボード翻訳 already uses the saved priorities. Settings that
+  // cannot be read leave the defaults in place; the settings screen says why when it is opened.
+  const settingsRead = loadSettings().then(
+    (loaded) => {
+      settings = loaded.settings;
+    },
+    () => {},
+  );
+
   $effect(() => {
     const text = source;
     if (sourceLanguage !== AUTO || text.trim() === "") {
@@ -113,6 +126,7 @@
     const targetSelected = targetLanguage;
     const formatSelected = sourceFormat;
     try {
+      await settingsRead;
       // Detected again from the text being translated, not taken from the labels, whose detection
       // may still be waiting out its delay.
       const [detected, format] = await Promise.all([
@@ -133,8 +147,13 @@
       const request = {
         text,
         format,
-        untranslatedKeys: DEFAULT_UNTRANSLATED_KEYS,
-        ...promptLanguages(sourceSelected, targetSelected, detected, DEFAULT_PRIORITIES),
+        untranslatedKeys: settings?.untranslatedKeys ?? DEFAULT_UNTRANSLATED_KEYS,
+        ...promptLanguages(
+          sourceSelected,
+          targetSelected,
+          detected,
+          settings === null ? DEFAULT_PRIORITIES : priorities(settings),
+        ),
       };
       await translateText(request, (text) => {
         if (id === current) {
@@ -273,8 +292,7 @@
     announce(stopped ? "翻訳を停止して、翻訳履歴から戻しました" : "翻訳履歴から戻しました");
   }
 
-  // Where TASK-21 connects the settings screen.
-  function openSettings() {}
+  let settingsOpen = $state(false);
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -284,7 +302,7 @@
     <h1>tiny-translator</h1>
     <div class="tools">
       <IconButton icon="history" label="翻訳履歴" onpress={() => (historyOpen = true)} />
-      <IconButton icon="settings" label="設定" onpress={openSettings} />
+      <IconButton icon="settings" label="設定" onpress={() => (settingsOpen = true)} />
     </div>
   </header>
 
@@ -361,6 +379,14 @@
 
 {#if historyOpen}
   <HistoryModal onpick={pickFromHistory} onclose={() => (historyOpen = false)} notify={(words) => toast.show(words)} />
+{/if}
+
+{#if settingsOpen}
+  <SettingsModal
+    onsaved={(saved) => (settings = saved)}
+    onclose={() => (settingsOpen = false)}
+    notify={(words) => toast.show(words)}
+  />
 {/if}
 
 <Toast bind:this={toast} />
