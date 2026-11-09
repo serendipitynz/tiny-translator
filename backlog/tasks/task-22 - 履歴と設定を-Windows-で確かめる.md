@@ -1,10 +1,10 @@
 ---
 id: TASK-22
 title: 履歴と設定を Windows で確かめる
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-09T19:00:00Z'
+updated_date: '2026-11-09 20:00'
 labels: []
 milestone: m-4
 dependencies:
