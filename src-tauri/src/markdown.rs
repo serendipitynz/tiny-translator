@@ -244,6 +244,7 @@ fn unit<'a>(
         original: &text[start..end],
         tags,
         lines,
+        attributes: Vec::new(),
     };
     Some((start..end, unit))
 }
@@ -371,6 +372,7 @@ mod tests {
                         Lines::Join => " join".to_owned(),
                         Lines::Cell => " cell".to_owned(),
                         Lines::Json => " json".to_owned(),
+                        Lines::Attribute(quote) => format!(" attribute {quote}"),
                     };
                     Some(format!("[{}]{lines}", unit.text))
                 }

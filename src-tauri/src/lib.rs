@@ -1,6 +1,7 @@
 mod clipboard;
 mod document;
 mod engine;
+mod html;
 mod json;
 mod language;
 mod markdown;
@@ -95,8 +96,8 @@ fn detect_language(text: String) -> Option<&'static str> {
     language::detect(&text)
 }
 
-/// Translates `text`, read as `format` (`"text"`, `"markdown"` or `"json"`), into `target` 翻訳単位
-/// by 翻訳単位 (doc-1 §7.1, §7.3), and answers `"done"` or `"stopped"`. JSON leaves the values under
+/// Translates `text`, read as `format` (`"text"`, `"markdown"`, `"json"` or `"html"`), into
+/// `target` 翻訳単位 by 翻訳単位 (doc-1 §7.1, §7.3), and answers `"done"` or `"stopped"`. JSON leaves the values under
 /// `untranslated_keys` (翻訳しないキー) as they are, and fails when `text` is not JSON. The
 /// translation goes to `on_update` as it is generated, as `["append", text]` to add
 /// at the end or `["replace", text]` for the whole translation so far. Waits for the engine to

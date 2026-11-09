@@ -166,6 +166,7 @@ impl<'a> Scan<'a, '_> {
             original,
             tags: None,
             lines: Lines::Json,
+            attributes: Vec::new(),
         }));
         self.kept_from = end;
     }
