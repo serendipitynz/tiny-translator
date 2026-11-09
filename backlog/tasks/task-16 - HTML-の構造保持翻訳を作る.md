@@ -1,10 +1,10 @@
 ---
 id: TASK-16
 title: HTML の構造保持翻訳を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-09 00:15'
+updated_date: '2026-11-09 00:29'
 labels: []
 milestone: m-3
 dependencies:
