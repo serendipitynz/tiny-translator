@@ -223,13 +223,19 @@ fn start_engine(app: &AppHandle) -> Result<Engine, Box<dyn std::error::Error>> {
         let model = engine::choose_model(&model_dir)?;
         // Truncated on every start: the log is for looking into the run that just went wrong.
         let log = File::create(log_dir.join("llama-server.log"))?;
-        engine::windowless(&program)
+        let child = engine::windowless(&program)
             .args(engine::server_args(&model, port))
             .env(engine::API_KEY_ENV, api_key)
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)
-            .spawn()
+            .spawn()?;
+        // The file name alone: the full path would put the user's home directory in the history.
+        let name = model.file_name().unwrap_or(model.as_os_str());
+        Ok(engine::Spawned {
+            child,
+            model: name.to_string_lossy().into_owned(),
+        })
     });
     let handle = app.clone();
     let notify: engine::Notify = Box::new(move |status| {
