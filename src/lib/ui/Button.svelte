@@ -5,15 +5,25 @@
     label: string;
     /** The words shown while busy. They share a cell with `label`, so the width never changes. */
     busyLabel?: string;
-    variant?: "primary" | "normal";
+    /** doc-8 §6.1's 主操作, 通常 and 破壊的操作 (for what cannot be undone). */
+    variant?: "primary" | "normal" | "danger";
     /** Disabled exactly when a reason is given: a disabled control without one is not made (doc-8 §5.4). */
     disabledReason?: string | null;
     busy?: boolean;
+    /** Where a modal puts the focus when it opens (`Modal.svelte`). */
+    autofocus?: boolean;
     onpress: () => void;
   }
 
-  let { label, busyLabel = label, variant = "normal", disabledReason = null, busy = false, onpress }: Props =
-    $props();
+  let {
+    label,
+    busyLabel = label,
+    variant = "normal",
+    disabledReason = null,
+    busy = false,
+    autofocus = false,
+    onpress,
+  }: Props = $props();
 
   const reasonId = $props.id();
   let disabled = $derived(disabledReason !== null);
@@ -48,6 +58,7 @@
   aria-describedby={disabled ? reasonId : undefined}
   aria-busy={busy ? "true" : undefined}
   title={disabledReason ?? undefined}
+  data-autofocus={autofocus ? "" : undefined}
   onclick={press}
 >
   <span class="words" class:hidden={busy}>{label}</span>
@@ -116,7 +127,8 @@
     }
   }
 
-  .normal {
+  .normal,
+  .danger {
     color: var(--snz-fg);
     background: var(--snz-surface);
     border-color: var(--snz-line-control);
@@ -128,6 +140,13 @@
     &:active {
       background: var(--snz-surface-pressed);
     }
+  }
+
+  // doc-8 §6.1: only the words and the outline take the danger colour. A danger face would read as
+  // the failure messages do, and the operation would look like a report.
+  .danger {
+    color: var(--snz-danger);
+    border-color: var(--snz-danger);
   }
 
   // Busy and disabled take no hover or press: the button does not act in either state.
@@ -142,7 +161,9 @@
   }
 
   .normal[aria-busy="true"],
-  .normal[aria-disabled="true"] {
+  .normal[aria-disabled="true"],
+  .danger[aria-busy="true"],
+  .danger[aria-disabled="true"] {
     &,
     &:hover,
     &:active {
@@ -164,6 +185,11 @@
     border-inline-end-color: transparent;
     border-radius: 50%;
     animation: spin var(--snz-motion-spin) linear infinite;
+  }
+
+  .danger .spinner {
+    border-color: var(--snz-danger);
+    border-inline-end-color: transparent;
   }
 
   .primary .spinner {
