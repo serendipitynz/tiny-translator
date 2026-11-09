@@ -67,6 +67,14 @@ const LANGUAGES: readonly SelectOption[] = [
   { value: "ru", label: "ロシア語" },
 ];
 
+/** The 53 languages alone, for a selector that offers no 自動 (the settings screen's priorities). */
+export const LANGUAGE_OPTIONS: readonly SelectOption[] = LANGUAGES;
+
+/** Whether `code` is one of the 53 the selectors list. */
+export function isListedLanguage(code: string): boolean {
+  return LANGUAGES.some((language) => language.value === code);
+}
+
 export const SOURCE_OPTIONS: readonly SelectOption[] = [{ value: AUTO, label: "自動判定" }, ...LANGUAGES];
 
 export const TARGET_OPTIONS: readonly SelectOption[] = [{ value: AUTO, label: "自動 (優先順位)" }, ...LANGUAGES];
@@ -77,7 +85,7 @@ export interface Priorities {
   second: string;
 }
 
-/** doc-1 §6.2's defaults, which stand until the settings screen (TASK-21) lets them be changed. */
+/** doc-1 §6.2's defaults, which the settings screen (TASK-21) starts from. */
 export const DEFAULT_PRIORITIES: Priorities = { first: "ja", second: "en" };
 
 /** The language's name on the screen, for a code the selectors list or [`CHINESE`]. */

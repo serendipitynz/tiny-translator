@@ -7,8 +7,8 @@ export type Outcome = "done" | "stopped";
 export type Format = "text" | "markdown" | "json" | "html";
 
 /**
- * The 翻訳しないキー until the settings screen lets the user name them (doc-1 §7.1, TASK-21): JSON
- * values under a key of one of these names stay as they are, at any depth.
+ * The 翻訳しないキー until the settings are read (doc-1 §7.1): JSON values under a key of one of
+ * these names stay as they are, at any depth. The settings screen (TASK-21) names the user's own.
  */
 export const DEFAULT_UNTRANSLATED_KEYS: readonly string[] = [];
 
