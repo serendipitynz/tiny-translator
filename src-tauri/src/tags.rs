@@ -35,6 +35,8 @@ struct Element {
     open: String,
     /// Paired: the markup after the text.
     close: String,
+    /// Whether a translation of the text without tags must hold `open` as written.
+    checked: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,11 +97,25 @@ impl Builder {
 
     /// Markup kept as `original`, standing for `plain` in the text without tags.
     pub fn void(&mut self, name: &'static str, original: &str, plain: &str) {
+        self.push_void(name, original, false);
+        self.plain.push_str(plain);
+    }
+
+    /// Markup kept as `original`, which the text without tags carries as it is and which a
+    /// translation of that text must hold as written, as it must a kept element's original:
+    /// an HTML element such as `<img …>` or `<br>`, which the page needs.
+    pub fn markup(&mut self, name: &'static str, original: &str) {
+        self.push_void(name, original, true);
+        self.plain.push_str(original);
+    }
+
+    fn push_void(&mut self, name: &'static str, original: &str, checked: bool) {
         let i = self.push(name, Kind::Void, original.to_owned());
+        self.elements[i - 1].checked = checked;
         self.text.push_str(&format!("<{name} i=\"{i}\"/>"));
         let i = self.push_kept(name, Kind::Void, original);
+        self.kept_elements[i - 1].checked = checked;
         self.kept_text.push_str(&format!("<{name} i=\"{i}\"/>"));
-        self.plain.push_str(plain);
     }
 
     fn push_kept(&mut self, name: &'static str, kind: Kind, original: &str) -> usize {
@@ -108,6 +124,7 @@ impl Builder {
             kind,
             open: original.to_owned(),
             close: String::new(),
+            checked: kind == Kind::Kept,
         });
         self.kept_elements.len()
     }
@@ -118,6 +135,7 @@ impl Builder {
             kind,
             open,
             close: String::new(),
+            checked: kind == Kind::Kept,
         });
         self.elements.len()
     }
@@ -157,10 +175,11 @@ impl Tagged {
         &self.plain
     }
 
-    /// Whether `translation`, made from the text without tags, holds every kept element's original
-    /// as written: the model was free to change them there.
+    /// Whether `translation`, made from the text without tags, holds every kept element's original,
+    /// and the markup added with [`Builder::markup`], as written: the model was free to change
+    /// them there.
     pub fn keeps_originals(&self, translation: &str) -> bool {
-        let kept = || self.elements.iter().filter(|e| e.kind == Kind::Kept);
+        let kept = || self.elements.iter().filter(|e| e.checked);
         kept().all(|element| {
             let wanted = kept().filter(|other| other.open == element.open).count();
             whole_occurrences(translation, &element.open) >= wanted

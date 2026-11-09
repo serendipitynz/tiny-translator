@@ -1,8 +1,8 @@
 //! Translating a text 翻訳単位 by 翻訳単位 (doc-1 §7.1, §7.3).
 //!
 //! The format cuts the text into 翻訳単位 and the original between them: the whitespace between
-//! paragraphs for プレーンテキスト, the markup for Markdown (`markdown.rs`), everything but the
-//! string values for JSON (`json.rs`). Each piece goes to the
+//! paragraphs for プレーンテキスト, the markup for Markdown (`markdown.rs`) and HTML (`html.rs`),
+//! everything but the string values for JSON (`json.rs`). Each piece goes to the
 //! engine as a prompt of its own, carrying the piece before it and that piece's translation, and
 //! the translation is put back together with the original between the pieces. A translation that
 //! starts repeating itself is cut off and made again sentence by sentence (doc-2 §1.1).
@@ -11,8 +11,10 @@
 //! again without them when its translation does not keep them.
 
 use std::borrow::Cow;
+use std::ops::ControlFlow;
 
 use crate::engine::CONTEXT_TOKENS;
+use crate::html;
 use crate::json;
 use crate::markdown;
 use crate::repetition::Repetition;
@@ -70,6 +72,9 @@ pub struct Unit<'a> {
     /// The elements behind the tags in `text`.
     pub tags: Option<Tagged>,
     pub lines: Lines,
+    /// HTML: the `alt` and `title` values, as written, on the inline elements of this 翻訳単位.
+    /// They are translated before it, and its tags are made again with their translations.
+    pub attributes: Vec<&'a str>,
 }
 
 /// How the line breaks of a translation are written where its 翻訳単位 stood.
@@ -85,6 +90,8 @@ pub enum Lines {
     Cell,
     /// Escaped, as the rest of the translation is, inside a JSON string.
     Json,
+    /// As spaces, with the quote escaped: an HTML attribute value inside these quotes.
+    Attribute(char),
 }
 
 impl Lines {
@@ -99,6 +106,7 @@ impl Lines {
                 (Lines::Join | Lines::Cell, '\n') => out.push(' '),
                 (Lines::Cell, '|') if !out.ends_with('\\') => out.push_str("\\|"),
                 (Lines::Json, c) => json::escape(out, c),
+                (Lines::Attribute(quote), c) => html::escape_attribute(out, c, *quote),
                 _ => out.push(c),
             }
         }
@@ -114,6 +122,7 @@ pub enum Format {
     Json {
         untranslated_keys: Vec<String>,
     },
+    Html,
 }
 
 impl Format {
@@ -124,6 +133,7 @@ impl Format {
             "text" => Some(Format::Text),
             "markdown" => Some(Format::Markdown),
             "json" => Some(Format::Json { untranslated_keys }),
+            "html" => Some(Format::Html),
             _ => None,
         }
     }
@@ -143,6 +153,7 @@ pub fn translate(
         Format::Text => text_segments(text),
         Format::Markdown => markdown::segments(text),
         Format::Json { untranslated_keys } => json::segments(text, untranslated_keys)?,
+        Format::Html => html::segments(text),
     };
     let mut run = Run {
         model,
@@ -174,6 +185,7 @@ fn text_segments(text: &str) -> Vec<Segment<'_>> {
             original: unit,
             tags: None,
             lines: Lines::Keep(String::new()),
+            attributes: Vec::new(),
         }));
         segments.push(Segment::Kept(after));
     }
@@ -197,10 +209,24 @@ impl<M: Model, F: FnMut(Update<'_>)> Run<'_, M, F> {
     /// used: the 翻訳単位 stays as the original writes it.
     fn unit(&mut self, unit: &Unit) -> Result<Outcome, String> {
         self.out.begin_unit(unit.lines.clone());
-        let Some(tags) = &unit.tags else {
-            return self.untagged(&unit.text);
+        let retagged;
+        let (text, tags) = if unit.attributes.is_empty() {
+            (unit.text.as_ref(), unit.tags.as_ref())
+        } else {
+            let mut values = Vec::new();
+            for value in &unit.attributes {
+                match self.aside(value)? {
+                    ControlFlow::Break(()) => return Ok(Outcome::Stopped),
+                    ControlFlow::Continue(translation) => values.push(translation),
+                }
+            }
+            retagged = html::retag(unit.original, &values);
+            (retagged.0.as_str(), retagged.1.as_ref())
         };
-        let mut attempt = Some((unit.text.as_ref(), tags));
+        let Some(tags) = tags else {
+            return self.untagged(text);
+        };
+        let mut attempt = Some((text, tags));
         while let Some((text, tagged)) = attempt {
             if self.fits(text, UNIT_TOKENS)?
                 && let Some(outcome) = self.tagged(text, tagged)?
@@ -219,6 +245,33 @@ impl<M: Model, F: FnMut(Update<'_>)> Run<'_, M, F> {
             self.history = None;
         }
         Ok(outcome)
+    }
+
+    /// Translates `text` in one prompt without the history, and without showing it: an attribute
+    /// value that goes inside the markup of the 翻訳単位 it stands in. `None` when it is too long
+    /// for a prompt or its translation repeats itself or is empty; the value then stays as it is.
+    /// The history is left as it was, since the text around the value is what the next piece
+    /// goes on from.
+    fn aside(&mut self, text: &str) -> Result<ControlFlow<(), Option<String>>, String> {
+        if !self.fits(text, UNIT_TOKENS)? {
+            return Ok(ControlFlow::Continue(None));
+        }
+        let prompt = translate::prompt(text, self.target, self.source, None);
+        let mut check = Repetition::for_input(text);
+        let mut generated = String::new();
+        let mut repeats = false;
+        let completion = self.model.complete(&prompt, &mut |piece| {
+            generated.push_str(piece);
+            repeats = piece.chars().any(|c| check.push(c).is_some());
+            !repeats
+        })?;
+        if completion == Completion::Stopped {
+            return Ok(ControlFlow::Break(()));
+        }
+        let translation = generated.trim();
+        Ok(ControlFlow::Continue(
+            (!repeats && !translation.is_empty()).then(|| translation.to_owned()),
+        ))
     }
 
     /// Translates a 翻訳単位 without tags, cut at sentences first when it is too long for a prompt.
@@ -1349,6 +1402,171 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
                 untranslated_keys: keys.clone()
             })
         );
-        assert_eq!(Format::from_name("html", keys), None);
+        assert_eq!(Format::from_name("html", keys.clone()), Some(Format::Html));
+        assert_eq!(Format::from_name("xml", keys), None);
+    }
+
+    const HTML: &str = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tiny Translator</title>
+  <style>body { font: 16px/1.5 sans-serif; }</style>
+</head>
+<body>
+  <h1 id="top">Getting <em>started</em></h1>
+  <p class="lead">
+    Install the app with <code>npm install tiny</code>, then read
+    <a href="/guide" title="The guide">the guide</a>.
+  </p>
+  <img src="logo.png" alt="The logo">
+  <ul>
+    <li>First item</li>
+    <li>Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to copy.<br>Then paste.</li>
+  </ul>
+  <table>
+    <tr><th>Option</th><td>42</td><td>&nbsp;</td></tr>
+  </table>
+  <pre><code>npm run build</code></pre>
+  <!-- footer -->
+  <script>document.title = "Hi";</script>
+</body>
+</html>
+"#;
+
+    #[test]
+    fn html_keeps_its_structure_and_translates_only_its_text_alt_and_title() {
+        let mut fake = Fake::new(shout);
+        let (outcome, shown, updates) = run_as(&mut fake, HTML, Format::Html);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(
+            shown,
+            r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>TINY TRANSLATOR</title>
+  <style>body { font: 16px/1.5 sans-serif; }</style>
+</head>
+<body>
+  <h1 id="top">GETTING <em>STARTED</em></h1>
+  <p class="lead">
+    INSTALL THE APP WITH <code>npm install tiny</code>, THEN READ
+    <a href="/guide" title="THE GUIDE">THE GUIDE</a>.
+  </p>
+  <img src="logo.png" alt="THE LOGO">
+  <ul>
+    <li>FIRST ITEM</li>
+    <li>PRESS <kbd>CTRL</kbd>+<kbd>C</kbd> TO COPY.<br>THEN PASTE.</li>
+  </ul>
+  <table>
+    <tr><th>OPTION</th><td>42</td><td>&nbsp;</td></tr>
+  </table>
+  <pre><code>npm run build</code></pre>
+  <!-- footer -->
+  <script>document.title = "Hi";</script>
+</body>
+</html>
+"#
+        );
+        assert_eq!(
+            fake.inputs(),
+            [
+                "Tiny Translator",
+                "Getting <em i=\"1\">started</em>",
+                "The guide",
+                "Install the app with <code i=\"1\">npm install tiny</code>, then read\n\
+                 <a i=\"2\">the guide</a>.",
+                "The logo",
+                "First item",
+                "Press <kbd i=\"1\">Ctrl</kbd>+<kbd i=\"2\">C</kbd> to copy.<br i=\"3\"/>Then paste.",
+                "Option",
+            ]
+        );
+        for update in &updates {
+            assert!(!update.contains(" i=\""), "{update}");
+        }
+        // The title inside the paragraph goes on its own, and the paragraph after it carries the
+        // heading's translation as before.
+        assert_eq!(
+            fake.prompts[2],
+            translate::prompt("The guide", "ja", Some("en"), None)
+        );
+        assert_eq!(
+            fake.prompts[3],
+            translate::prompt(
+                fake.inputs()[3],
+                "ja",
+                Some("en"),
+                Some((
+                    "Getting <em i=\"1\">started</em>",
+                    "GETTING <em i=\"1\">STARTED</em>"
+                ))
+            )
+        );
+    }
+
+    #[test]
+    fn html_markup_the_try_without_tags_dropped_keeps_the_original() {
+        let text = "<p>Press<br>now <b>quickly</b>.</p>";
+        let mut fake = Fake::new(|input| {
+            if input.contains('<') && !input.contains("<br>") {
+                Reply::Text("タグなし".into())
+            } else {
+                Reply::Text("PRESS NOW QUICKLY.".into())
+            }
+        });
+        let (outcome, shown, _) = run_as(&mut fake, text, Format::Html);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, text);
+        assert_eq!(
+            fake.inputs(),
+            [
+                "Press<br i=\"1\"/>now <b i=\"2\">quickly</b>.",
+                "Press<br i=\"1\"/>now quickly.",
+                "Press<br>now quickly.",
+            ]
+        );
+
+        // Kept as written, the markup lets the translation without tags stand.
+        let mut fake = Fake::new(|input| {
+            if input.contains("<br>") {
+                shout(input)
+            } else {
+                Reply::Text("タグなし".into())
+            }
+        });
+        let (_, shown, _) = run_as(&mut fake, text, Format::Html);
+        assert_eq!(shown, "<p>PRESS<br>NOW QUICKLY.</p>");
+    }
+
+    #[test]
+    fn an_attribute_value_that_repeats_itself_stays_as_written() {
+        let mut fake = Fake::new(|input| {
+            if input == "Home" {
+                Reply::Loop("ホーム".into(), "ホーム".into())
+            } else {
+                shout(input)
+            }
+        });
+        let text = r#"<p>Go <a href="/" title="Home">back</a>.</p>"#;
+        let (outcome, shown, _) = run_as(&mut fake, text, Format::Html);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, r#"<p>GO <a href="/" title="Home">BACK</a>.</p>"#);
+    }
+
+    #[test]
+    fn a_stop_while_translating_an_attribute_value_ends_the_translation() {
+        let mut fake = Fake::new(|input| {
+            if input == "Home" {
+                Reply::Stopped
+            } else {
+                shout(input)
+            }
+        });
+        let text = r#"<p>One.</p><p>Go <a href="/" title="Home">back</a>.</p><p>Three.</p>"#;
+        let (outcome, shown, _) = run_as(&mut fake, text, Format::Html);
+        assert_eq!(outcome, Ok(Outcome::Stopped));
+        assert_eq!(shown, "<p>ONE.</p><p>");
     }
 }

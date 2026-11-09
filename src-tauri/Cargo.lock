@@ -1546,6 +1546,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "html5gum"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "469fd7ad11d167b79385adccbba0fae87a50a9adb0c081e8ce7b130faa51f3bb"
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3897,6 +3903,7 @@ name = "tiny-translator"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.3.4",
+ "html5gum",
  "objc2",
  "objc2-app-kit",
  "pulldown-cmark",
