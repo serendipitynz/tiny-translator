@@ -3,7 +3,7 @@ id: doc-1
 title: tiny-translator の設計
 type: specification
 created_date: '2026-11-05 19:39'
-updated_date: '2026-11-09 20:15'
+updated_date: '2026-11-09 20:20'
 ---
 # tiny-translator 設計
 
@@ -760,7 +760,7 @@ GGUF のリポジトリ `pfnet/plamo-3-translate-{0.8b,2b,8b}-GGUF` の `LICENSE
 - 訳文ごとに PLaMo の出力である旨を付ける表示 (コピーした訳文へ文言を足すなど) は置かない。第 5 条 (2) により、訳文は明示なしで公表できる。
 - D2 の全文は配布者が書き写さず、GGUF リポジトリの `LICENSE/ja`・`LICENSE/en` をそのまま使う。初回のダウンロードを採るなら、
   ダウンロードする GGUF と同じコミットの `LICENSE` を D3 で示す。第 12 条で条文が変わりうるため、示した版と入手したモデルの版をそろえる。
-- D1・D2・D5 を画面へ置く作業は、まだどのタスクにも入っていない。
+- D1・D2・D5 を画面へ置く作業は TASK-29 で、D3 は TASK-24 で行う。
 
 ## 11. 確認していないこと
 
