@@ -1,10 +1,10 @@
 ---
 id: TASK-19
 title: 翻訳履歴の保存と全文検索を作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-09 05:56'
+updated_date: '2026-11-09 07:38'
 labels: []
 milestone: m-4
 dependencies:
