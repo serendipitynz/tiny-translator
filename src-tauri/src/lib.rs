@@ -390,19 +390,32 @@ fn settings_save(
     engine: State<'_, Engine>,
     settings: Value,
 ) -> Result<(), String> {
-    let settings = settings::from_value(&settings)?;
-    let mut current = store.lock();
-    let model_changed = current.0.model != settings.model;
+    apply_settings(&store, &engine, settings::from_value(&settings)?)
+}
+
+/// [`settings_save`] once the screen's value is read.
+fn apply_settings(
+    store: &SettingsStore,
+    engine: &Engine,
+    settings: Settings,
+) -> Result<(), String> {
+    // The lock is let go before the engine is touched: a reload spawns the engine at once, and the
+    // spawn reads the chosen model from this same store.
+    let (model_changed, write_blocker) = {
+        let mut current = store.lock();
+        let model_changed = current.0.model != settings.model;
+        current.0 = settings.clone();
+        (model_changed, current.1.write_blocker())
+    };
     engine.set_idle_release(idle_release(settings.idle_release_minutes));
-    current.0 = settings;
     if model_changed {
         engine.reload();
     }
-    if let Some(reason) = current.1.write_blocker() {
+    if let Some(reason) = write_blocker {
         return Err(reason);
     }
-    settings::save(&store.path, &current.0).map_err(|err| err.to_string())?;
-    current.1 = FileState::Read;
+    settings::save(&store.path, &settings).map_err(|err| err.to_string())?;
+    store.lock().1 = FileState::Read;
     Ok(())
 }
 
@@ -634,5 +647,54 @@ mod tests {
     fn a_history_that_could_not_be_opened_leaves_the_translation_done() {
         let history = HistoryState(Mutex::new(Err("unreadable".into())));
         assert_eq!(run(Ok(Completion::Done), &history), Ok(Outcome::Done));
+    }
+
+    /// The engine's spawn reads the chosen model from the store, as the app's does; saving a new
+    /// model reloads a loading engine, which spawns at once.
+    #[cfg(unix)]
+    #[test]
+    fn saving_a_new_model_reloads_the_engine_without_waiting_on_the_settings() {
+        let dir =
+            std::env::temp_dir().join(format!("tiny-translator-apply-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(SettingsStore::load(&dir));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let (reader, models) = (Arc::clone(&store), Arc::clone(&seen));
+        let engine = Engine::new(
+            Box::new(move |_, _| {
+                models.lock().unwrap().push(reader.get().model);
+                // Never answers /health, so the engine stays 読み込み中.
+                let child = std::process::Command::new("sleep").arg("60").spawn()?;
+                Ok(engine::Spawned {
+                    child,
+                    model: "stand-in.gguf".into(),
+                })
+            }),
+            Box::new(|_| {}),
+            None,
+        );
+        engine.start();
+        let settings = Settings {
+            model: Some("other.gguf".into()),
+            ..Settings::default()
+        };
+        let (done, finished) = std::sync::mpsc::channel();
+        let (store_in, engine) = (Arc::clone(&store), Arc::new(engine));
+        let engine_in = Arc::clone(&engine);
+        std::thread::spawn(move || {
+            let _ = done.send(apply_settings(&store_in, &engine_in, settings));
+        });
+        let result = finished
+            .recv_timeout(Duration::from_secs(5))
+            .expect("saving the settings never returned");
+        assert_eq!(result, Ok(()));
+        assert_eq!(*seen.lock().unwrap(), [None, Some("other.gguf".to_owned())]);
+        assert_eq!(
+            settings::load(&store.path, 0).0.model.as_deref(),
+            Some("other.gguf")
+        );
+        engine.shutdown();
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
