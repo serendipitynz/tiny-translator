@@ -1,6 +1,7 @@
 mod clipboard;
 mod document;
 mod engine;
+mod format;
 mod html;
 mod json;
 mod language;
@@ -52,6 +53,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             engine_state,
             detect_language,
+            detect_format,
             translate,
             stop_translation,
             launch_clipboard,
@@ -94,6 +96,13 @@ fn engine_state(engine: State<'_, Engine>) -> (&'static str, Option<String>) {
 #[tauri::command]
 fn detect_language(text: String) -> Option<&'static str> {
     language::detect(&text)
+}
+
+/// The format `text` is read as when the screen leaves it to the app (doc-1 §7.2): `"json"`,
+/// `"html"`, `"markdown"` or `"text"`.
+#[tauri::command]
+fn detect_format(text: String) -> &'static str {
+    format::detect(&text)
 }
 
 /// Translates `text`, read as `format` (`"text"`, `"markdown"`, `"json"` or `"html"`), into

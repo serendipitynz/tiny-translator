@@ -80,6 +80,42 @@ pub fn escape_attribute(out: &mut String, c: char, quote: char) {
     }
 }
 
+/// What tells `text` apart as HTML (doc-1 §7.2).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Signs {
+    /// Whether it has an `html` element or a doctype: a whole document.
+    pub document: bool,
+    /// How many block elements it closes with their end tags (`</p>`, `</li>`, `</pre>`). The
+    /// elements inside one whose content is not read (`svg`, `pre`) are not counted.
+    pub closed_blocks: usize,
+}
+
+/// The [`Signs`] of `text`, read with the tokens it would be translated by.
+pub fn signs(text: &str) -> Signs {
+    let items = items(text);
+    let mut signs = Signs::default();
+    let mut i = 0;
+    while i < items.len() {
+        match &items[i] {
+            Item::Start { name, .. } if name == "html" => signs.document = true,
+            Item::Start { name, .. }
+                if role(name) == Role::Verbatim && end_of(&items, i).is_some() =>
+            {
+                signs.closed_blocks += 1;
+            }
+            Item::End { name, .. } if role(name) == Role::Block => signs.closed_blocks += 1,
+            Item::Other { range } => {
+                signs.document |= text[range.clone()]
+                    .get(2..9)
+                    .is_some_and(|word| word.eq_ignore_ascii_case("doctype"));
+            }
+            _ => {}
+        }
+        i = past(&items, i);
+    }
+    signs
+}
+
 /// One token of the original, and its place.
 #[derive(Debug)]
 enum Item {
