@@ -89,7 +89,15 @@ impl fmt::Display for AcquireError {
 
 /// Starts the engine process listening on 127.0.0.1 at the given port, accepting only requests
 /// that carry the given API key.
-pub type Spawn = Box<dyn Fn(u16, &str) -> io::Result<Child> + Send + Sync>;
+pub type Spawn = Box<dyn Fn(u16, &str) -> io::Result<Spawned> + Send + Sync>;
+
+/// What [`Spawn`] started.
+pub struct Spawned {
+    pub child: Child,
+    /// The name of the model the process loads, as the translations it makes record it
+    /// ([`Lease::model`]).
+    pub model: String,
+}
 /// Hears every change of [`Status`]. Called with the engine's lock held, so it must not call back
 /// into the [`Engine`].
 pub type Notify = Box<dyn Fn(&Status) + Send + Sync>;
@@ -103,6 +111,7 @@ pub struct Lease {
     shared: Arc<Shared>,
     port: u16,
     api_key: String,
+    model: String,
 }
 
 impl Lease {
@@ -112,6 +121,10 @@ impl Lease {
 
     pub fn api_key(&self) -> &str {
         &self.api_key
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
     }
 }
 
@@ -155,6 +168,7 @@ struct Running {
     child: Child,
     port: u16,
     api_key: String,
+    model: String,
 }
 
 impl Engine {
@@ -208,14 +222,15 @@ impl Engine {
             match inner.state {
                 EngineState::Ready => {
                     let running = inner.process.as_ref().expect("ready without a process");
-                    let (port, api_key) = (running.port, running.api_key.clone());
+                    let lease = Lease {
+                        shared: Arc::clone(&self.shared),
+                        port: running.port,
+                        api_key: running.api_key.clone(),
+                        model: running.model.clone(),
+                    };
                     inner.leases += 1;
                     inner.idle_since = None;
-                    return Ok(Lease {
-                        shared: Arc::clone(&self.shared),
-                        port,
-                        api_key,
-                    });
+                    return Ok(lease);
                 }
                 EngineState::Loading => {
                     inner = self.shared.wait(inner);
@@ -304,11 +319,12 @@ impl Shared {
     fn spawn_process(self: &Arc<Self>, inner: &mut Inner, attempt: u32) -> Result<(), String> {
         let spawned = new_api_key().and_then(|api_key| {
             let port = free_port()?;
-            let child = (self.spawn)(port, &api_key)?;
+            let Spawned { child, model } = (self.spawn)(port, &api_key)?;
             Ok(Running {
                 child,
                 port,
                 api_key,
+                model,
             })
         });
         let running = spawned.map_err(|err| format!("could not start the engine: {err}"))?;
@@ -680,6 +696,15 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+    const MODEL: &str = "stand-in.gguf";
+
+    fn spawned(child: io::Result<Child>) -> io::Result<Spawned> {
+        child.map(|child| Spawned {
+            child,
+            model: MODEL.into(),
+        })
+    }
+
     /// A stand-in engine: a `sleep` process for the process side, and a thread that answers
     /// `/health` on the chosen port once `ready` is set — or never, while it is clear. `spawns`
     /// counts the ones that came up, not the attempts [`START_ATTEMPTS`] allows.
@@ -705,10 +730,10 @@ mod tests {
             Engine::new(
                 Box::new(move |port, _| {
                     if !serve_health(port, Arc::clone(&ready)) {
-                        return Command::new("false").spawn();
+                        return spawned(Command::new("false").spawn());
                     }
                     spawns.fetch_add(1, Ordering::SeqCst);
-                    Command::new("sleep").arg("60").spawn()
+                    spawned(Command::new("sleep").arg("60").spawn())
                 }),
                 Box::new(move |status| states.lock().unwrap().push(status.state)),
                 pid_file,
@@ -771,9 +796,9 @@ mod tests {
             Box::new(move |port, key: &str| {
                 seen.lock().unwrap().push(key.to_owned());
                 if !serve_health(port, Arc::new(AtomicBool::new(true))) {
-                    return Command::new("false").spawn();
+                    return spawned(Command::new("false").spawn());
                 }
-                Command::new("sleep").arg("60").spawn()
+                spawned(Command::new("sleep").arg("60").spawn())
             }),
             Box::new(|_| {}),
             None,
@@ -790,6 +815,13 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(first.len(), 64);
         assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
+        engine.shutdown();
+    }
+
+    #[test]
+    fn a_lease_names_the_model_its_process_loaded() {
+        let engine = Fake::new().engine(None);
+        assert_eq!(engine.acquire().unwrap().model(), MODEL);
         engine.shutdown();
     }
 
@@ -875,9 +907,9 @@ mod tests {
                 let mut seen = seen.lock().unwrap();
                 seen.push(port);
                 if seen.len() == 1 || !serve_health(port, Arc::clone(&ready)) {
-                    return Command::new("false").spawn();
+                    return spawned(Command::new("false").spawn());
                 }
-                Command::new("sleep").arg("60").spawn()
+                spawned(Command::new("sleep").arg("60").spawn())
             }),
             Box::new(move |status: &Status| heard.lock().unwrap().push(status.state)),
             None,
@@ -901,7 +933,7 @@ mod tests {
         let engine = Engine::new(
             Box::new(move |port, _| {
                 serve_health(port, Arc::clone(&ready));
-                Command::new("false").spawn()
+                spawned(Command::new("false").spawn())
             }),
             Box::new(|_| {}),
             None,
@@ -963,7 +995,7 @@ mod tests {
     #[test]
     fn an_engine_that_exits_while_loading_is_reported() {
         let engine = Engine::new(
-            Box::new(|_, _| Command::new("false").spawn()),
+            Box::new(|_, _| spawned(Command::new("false").spawn())),
             Box::new(|_| {}),
             None,
         );
