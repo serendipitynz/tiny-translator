@@ -13,6 +13,7 @@
     searchTerms,
   } from "./lib/history";
   import { announce } from "./lib/ui/announce";
+  import { focusWasLost } from "./lib/ui/focus";
   import Button from "./lib/ui/Button.svelte";
   import IconButton from "./lib/ui/IconButton.svelte";
   import Modal from "./lib/ui/Modal.svelte";
@@ -123,10 +124,15 @@
     }
     failure = null;
     notify("翻訳を削除しました");
-    // doc-9 §5.1: the delete button that held the focus is gone, so the focus moves to the nearest one
-    // left — the row that took its place, else the one above, else the search — and deleting several
-    // in a row stays one key per row.
+    // doc-9 §5.1: when the focus went with the removed row, it moves to the nearest delete button left
+    // — the row that took its place, else the one above, else the search — so deleting several in a
+    // row stays one key per row. Focus that is elsewhere by now (the clear-all confirmation opened
+    // while the deletion was answered) stays there: pulled back behind that layer, Enter would delete
+    // another row.
     await tick();
+    if (!focusWasLost(document.activeElement, document.body)) {
+      return;
+    }
     const rows = list.querySelectorAll<HTMLElement>("li button:not(.entry)");
     const next = rows[Math.min(at, rows.length - 1)];
     if (next === undefined) {
