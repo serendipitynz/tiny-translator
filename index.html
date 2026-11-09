@@ -49,6 +49,16 @@
             apply();
           }
         });
+
+        // The settings screen puts a new choice into effect through here, so this listener follows
+        // it rather than the choice read at launch (src/lib/appearance.ts). The screen has checked it.
+        window.tinyColorScheme = {
+          choose(nextFamily, nextMode) {
+            family = nextFamily;
+            mode = nextMode;
+            apply();
+          },
+        };
       })();
     </script>
     <!-- Linked here rather than imported from main.ts: a stylesheet in <head> blocks the first
