@@ -1,10 +1,10 @@
 ---
 id: TASK-23
 title: PLaMo Community License の条文を確認する
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-09 20:15'
+updated_date: '2026-11-09 21:11'
 labels: []
 milestone: m-5
 dependencies: []
