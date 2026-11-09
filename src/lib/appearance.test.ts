@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appearanceNotice, INITIAL_APPEARANCE, readAppearance, writeAppearance } from "./appearance";
+import { appearanceNotice, appearanceToStore, INITIAL_APPEARANCE, readAppearance, writeAppearance } from "./appearance";
 
 const storage = (stored: Record<string, string>) => ({ getItem: (key: string) => stored[key] ?? null });
 
@@ -75,5 +75,22 @@ describe("appearanceNotice", () => {
       }),
     );
     expect(notice?.level).toBe("degraded");
+  });
+});
+
+describe("appearanceToStore", () => {
+  const solarized = { family: "solarized", mode: "dark" };
+
+  it("writes a choice that differs from the one drawn", () => {
+    expect(appearanceToStore(solarized, INITIAL_APPEARANCE, false)).toBe(true);
+    expect(appearanceToStore({ ...INITIAL_APPEARANCE, mode: "light" }, INITIAL_APPEARANCE, false)).toBe(true);
+  });
+
+  it("leaves an unchanged choice alone, so a value this version lacks stays stored", () => {
+    expect(appearanceToStore(INITIAL_APPEARANCE, INITIAL_APPEARANCE, false)).toBe(false);
+  });
+
+  it("writes again a choice an earlier save drew but could not store", () => {
+    expect(appearanceToStore(solarized, solarized, true)).toBe(true);
   });
 });

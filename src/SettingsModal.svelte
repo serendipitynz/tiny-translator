@@ -4,6 +4,7 @@
     type Appearance,
     appearanceNotice,
     applyAppearance,
+    appearanceToStore,
     FAMILY_OPTIONS,
     MODE_OPTIONS,
     readAppearance,
@@ -84,6 +85,8 @@
   let mode = $state(initialAppearance.appearance.mode);
   /** The appearance drawn now, which the draft is compared with. */
   let shownAppearance = $state<Appearance>(initialAppearance.appearance);
+  /** Whether the appearance drawn now could not be stored, so the next save tries it again. */
+  let appearanceUnstored = $state(false);
 
   let engine = $state<EngineStatus | null>(null);
   let memory = $state<number | null>(null);
@@ -211,7 +214,7 @@
     } catch (error) {
       failures.push(`設定を保存できませんでした。この起動の間だけ、選んだ設定で動きます。(${error})`);
     }
-    if (appearanceChanged) {
+    if (appearanceToStore(chosen, shownAppearance, appearanceUnstored)) {
       // Drawn whether or not it is stored: the user chose a scheme, not a save (doc-7 §5.3).
       applyAppearance(chosen);
       let stored = false;
@@ -220,6 +223,7 @@
       } catch {
         stored = false;
       }
+      appearanceUnstored = !stored;
       if (stored) {
         storedAppearance = { appearance: chosen, state: "read", stored: { ...chosen } };
       } else {

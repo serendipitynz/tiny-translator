@@ -72,6 +72,15 @@ export function writeAppearance(storage: Pick<Storage, "setItem">, appearance: A
   }
 }
 
+/**
+ * Whether saving writes the appearance: when the chosen one differs from the one drawn, or when an
+ * earlier save drew it but could not store it — drawn, it no longer differs, and a retry would
+ * otherwise report it saved while the next launch draws the old one.
+ */
+export function appearanceToStore(chosen: Appearance, shown: Appearance, unstored: boolean): boolean {
+  return unstored || chosen.family !== shown.family || chosen.mode !== shown.mode;
+}
+
 declare global {
   interface Window {
     /** Set by the script in index.html. */
