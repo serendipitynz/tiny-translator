@@ -1,5 +1,6 @@
 //! 起動時のクリップボード翻訳 (doc-1 §6.3): whether the clipboard may be read at launch, and
-//! whether what it holds was already translated at the previous launch.
+//! whether what it holds was already translated at the previous launch. Also how text read from
+//! the clipboard breaks its lines.
 
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -23,6 +24,18 @@ pub fn readable_without_asking() -> bool {
 #[cfg(not(target_os = "macos"))]
 pub fn readable_without_asking() -> bool {
     true
+}
+
+/// `text` with its CRLF and lone CR line breaks as LF: as the source pane holds text typed or
+/// pasted into it, since a textarea's value breaks lines with LF alone (doc-1 §7.1). Windows'
+/// clipboard breaks them with CRLF; left as they are, the CR would reach the engine inside a
+/// 翻訳単位, and the translation would break its lines with the original's CRLF between 翻訳単位
+/// and the engine's LF inside them.
+pub fn with_lf_line_breaks(text: String) -> String {
+    if !text.contains('\r') {
+        return text;
+    }
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 /// The clipboard text taken at the previous launch, kept as a digest so that whatever the
@@ -90,6 +103,17 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn line_breaks_become_lf() {
+        assert_eq!(
+            with_lf_line_breaks("# Title\r\n\r\n- one\r\n- two\r\n".into()),
+            "# Title\n\n- one\n- two\n"
+        );
+        assert_eq!(with_lf_line_breaks("old\rmac\r".into()), "old\nmac\n");
+        assert_eq!(with_lf_line_breaks("a\r\r\nb".into()), "a\n\nb");
+        assert_eq!(with_lf_line_breaks("a\nb\n".into()), "a\nb\n");
     }
 
     #[test]
