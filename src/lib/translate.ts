@@ -4,7 +4,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 export type Outcome = "done" | "stopped";
 
 /** How the original is read (doc-1 §7.1): its structure is kept in the translation. */
-export type Format = "text" | "markdown" | "json";
+export type Format = "text" | "markdown" | "json" | "html";
 
 /**
  * The 翻訳しないキー until the settings screen lets the user name them (doc-1 §7.1, TASK-21): JSON
