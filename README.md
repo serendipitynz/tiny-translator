@@ -38,6 +38,13 @@ powershell -ExecutionPolicy Bypass -File scripts\build-llama-server.ps1
 翻訳エンジンのログは `llama-server.log` に出る (macOS では `~/Library/Logs/com.serendipitynz.tiny-translator/`、
 Windows では `%LOCALAPPDATA%\com.serendipitynz.tiny-translator\logs\`)。
 
+## ライセンスの表示
+
+Built with PLaMo. 翻訳に使うモデル PLaMo 3 Translate は、Preferred Networks の
+[PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-ja) で提供される。
+アプリの「設定」の「ライセンス」から、条文の全文 (日本語版と英語版) と、使う人自身が守る条件
+(業務での利用の登録、長文の公表物での明示、訳文を渡すときの表示、重要な決定での制限) の案内を開ける。
+
 ## 開発コマンド
 
 リポジトリのルートで実行する。

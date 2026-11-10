@@ -41,6 +41,7 @@
   import Panel from "./lib/ui/Panel.svelte";
   import Select from "./lib/ui/Select.svelte";
   import TextArea from "./lib/ui/TextArea.svelte";
+  import LicenceModal from "./LicenceModal.svelte";
   import ModelFetchModal from "./ModelFetchModal.svelte";
 
   interface Props {
@@ -153,6 +154,7 @@
   void load();
 
   let fetchOpen = $state(false);
+  let licenceOpen = $state(false);
 
   $effect(() => watchEngine((status) => (engine = status)));
 
@@ -399,6 +401,18 @@
         </div>
       {/snippet}
     </Panel>
+
+    <!-- doc-1 §10.3's D1 and D2: last in the settings, which the header always reaches, and drawn
+         whether or not the settings could be read. -->
+    <Panel heading="ライセンス">
+      {#snippet children()}
+        <div class="fields">
+          <p class="built-with">Built with PLaMo</p>
+          <p class="hint">翻訳に使うモデル PLaMo 3 Translate は、Preferred Networks の PLaMo Community License で提供されています。</p>
+          <Button label="ライセンスを表示" onpress={() => (licenceOpen = true)} />
+        </div>
+      {/snippet}
+    </Panel>
   </div>
 
   {#snippet actions()}
@@ -416,6 +430,10 @@
     onclose={() => (fetchOpen = false)}
     {notify}
   />
+{/if}
+
+{#if licenceOpen}
+  <LicenceModal onclose={() => (licenceOpen = false)} />
 {/if}
 
 {#if confirmingDiscard}
@@ -453,8 +471,13 @@
 
   .hint,
   .engine,
+  .built-with,
   .confirm {
     margin: 0;
+  }
+
+  .built-with {
+    font-weight: var(--snz-font-weight-semibold);
   }
 
   .hint {
