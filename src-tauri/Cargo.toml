@@ -32,6 +32,12 @@ whatlang = "=0.18.0"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }
 
+# Tauri offers no way to turn off WebView2's browser keys (TASK-27), so the app reaches the WebView2
+# settings itself. Both are the versions wry already pulls in.
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
+
 # `tauri dev` builds unoptimised, where hashing a 1.8 GB GGUF would take tens of seconds instead of
 # about one (doc-1 §10.4).
 [profile.dev.package.sha2]

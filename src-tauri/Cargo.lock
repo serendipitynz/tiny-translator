@@ -3984,7 +3984,9 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
+ "webview2-com",
  "whatlang",
+ "windows-core",
 ]
 
 [[package]]
