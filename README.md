@@ -59,4 +59,39 @@ cargo test
 cargo fmt --check
 ```
 
-`scripts/` には技術検証 (m-0) で使った計測用のスクリプトがあり、アプリのビルドとは独立している。
+`scripts/` には技術検証 (m-0) で使った計測用のスクリプトもあり、アプリのビルドとは独立している。
+
+## 配布物
+
+配布物は macOS (Apple Silicon) の `.dmg` と Windows (x86_64) の NSIS インストーラー (`*-setup.exe`) で、
+GitHub Actions の `.github/workflows/release.yml` が作る (設計は doc-1 §13)。
+
+- macOS の `.app` と `.dmg` は Developer ID で署名し、Apple の公証を受けている。
+- Windows のインストーラーはコード署名していない。初めて開くと SmartScreen が「Windows によって PC が保護されました」を出すので、
+  「詳細情報」から「実行」を選ぶ。インストール先は利用者ごとの `%LOCALAPPDATA%\tiny-translator\` で、管理者権限は要らない。
+- どちらにもモデルは入っていない。初回に「モデルを入手」で取得する。
+- 同梱するソフトウェアのライセンスは `THIRD-PARTY-LICENSES.txt` にあり、配布物にも入る
+  (macOS は `.app` の `Contents/Resources/`、Windows はインストール先のフォルダー)。
+
+### リリースの手順
+
+1. `package.json`・`src-tauri/tauri.conf.json`・`src-tauri/Cargo.toml` の `version` をそろえて上げ、
+   `src-tauri/` で `cargo update -p tiny-translator` を実行して `Cargo.lock` も合わせる。
+2. 依存を変えたときは `THIRD-PARTY-LICENSES.txt` を作り直す (`pnpm test` が古いと失敗する)。
+   ```sh
+   cargo fetch --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --target x86_64-pc-windows-msvc
+   node scripts/generate-third-party-licenses.mjs
+   ```
+3. 既定のブランチにマージしたら、そのコミットに `vX.Y.Z` のタグを付けて push する。
+   ワークフローが下書きのリリースを作り、両 OS の配布物を検査してから置く。
+4. 下書きの配布物と自動生成のリリースノートを確かめて、手で公開する。
+
+ワークフローは macOS の署名と公証に 6 つのリポジトリシークレットを使う。初めて使う前に、Developer ID Application の証明書を
+キーチェーンアクセスから `.p12` で書き出し、`.env.signing` (`.env.signing.example` を写して埋める) を用意して、次で登録する。
+
+```sh
+./scripts/setup-ci-signing-secrets.sh path/to/DeveloperID.p12
+```
+
+手元の Mac で署名・公証した `.dmg` を作るときは、`.env.signing` を用意して `./scripts/macos-sign-build.sh` を実行する。
+できた `.app` と `.dmg` は `scripts/macos-verify-gatekeeper.sh` が Gatekeeper の判定で確かめる。
