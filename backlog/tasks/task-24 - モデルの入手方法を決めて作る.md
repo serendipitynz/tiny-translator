@@ -1,10 +1,10 @@
 ---
 id: TASK-24
 title: モデルの入手方法を決めて作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-10 04:32'
+updated_date: '2026-11-10 04:38'
 labels: []
 milestone: m-5
 dependencies:
