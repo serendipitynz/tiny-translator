@@ -324,6 +324,8 @@ jobs:
               sys.exit(f"::error::{setup.name} does not install llama-server.exe.")
           version = subprocess.run([str(engine), "--version"], capture_output=True, text=True)
           print(version.stdout + version.stderr)
+          if version.returncode != 0:
+              sys.exit(f"::error::the installed llama-server.exe --version exited with {version.returncode}.")
 
           exe = dest / "tiny-translator.exe"
           ico = Path("src-tauri/icons/icon.ico").read_bytes()
