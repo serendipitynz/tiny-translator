@@ -37,6 +37,9 @@ struct Element {
     close: String,
     /// Whether a translation of the text without tags must hold `open` as written.
     checked: bool,
+    /// Whether a translation must hold `open` exactly as many times as the 翻訳単位 does, with or
+    /// without tags: a placeholder, which the app fills in from as many arguments as it passes.
+    exact: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,20 +89,28 @@ impl Builder {
 
     /// Text kept as `original`, shown to the engine as `shown`.
     pub fn kept(&mut self, name: &'static str, original: &str, shown: &str) {
-        self.kept_as(name, original, shown, original);
+        self.push_kept_text(name, original, shown, false);
+        self.plain.push_str(original);
     }
 
-    /// Text kept as `original`, shown to the engine as `shown` and standing for `plain` in the text
-    /// without tags: a JSON string's placeholder, which the engine reads with its escapes undone
-    /// and which comes back as the original escapes it.
-    pub fn kept_as(&mut self, name: &'static str, original: &str, shown: &str, plain: &str) {
+    /// A placeholder kept as `original` and shown to the engine as `shown`, with tags and without:
+    /// a JSON string's placeholder, which the engine reads with its escapes undone and which comes
+    /// back as the original escapes it. A translation that holds it more or fewer times than the
+    /// 翻訳単位 does is not used (see [`Tagged::restore`] and [`Tagged::keeps_originals`]).
+    pub fn placeholder(&mut self, name: &'static str, original: &str, shown: &str) {
+        self.push_kept_text(name, original, shown, true);
+        self.plain.push_str(shown);
+    }
+
+    fn push_kept_text(&mut self, name: &'static str, original: &str, shown: &str, exact: bool) {
         let i = self.push(name, Kind::Kept, original.to_owned());
+        self.elements[i - 1].exact = exact;
         self.text
             .push_str(&format!("<{name} i=\"{i}\">{shown}</{name}>"));
         let i = self.push_kept(name, Kind::Kept, original);
+        self.kept_elements[i - 1].exact = exact;
         self.kept_text
             .push_str(&format!("<{name} i=\"{i}\">{shown}</{name}>"));
-        self.plain.push_str(plain);
     }
 
     /// Markup kept as `original`, standing for `plain` in the text without tags.
@@ -132,6 +143,7 @@ impl Builder {
             open: original.to_owned(),
             close: String::new(),
             checked: kind == Kind::Kept,
+            exact: false,
         });
         self.kept_elements.len()
     }
@@ -143,6 +155,7 @@ impl Builder {
             open,
             close: String::new(),
             checked: kind == Kind::Kept,
+            exact: false,
         });
         self.elements.len()
     }
@@ -184,13 +197,41 @@ impl Tagged {
 
     /// Whether `translation`, made from the text without tags, holds every kept element's original,
     /// and the markup added with [`Builder::markup`], as written: the model was free to change
-    /// them there.
+    /// them there. A placeholder must be there exactly as many times as in the 翻訳単位.
     pub fn keeps_originals(&self, translation: &str) -> bool {
-        let kept = || self.elements.iter().filter(|e| e.checked);
+        let kept = || self.elements.iter().filter(|e| e.checked && !e.exact);
         kept().all(|element| {
             let wanted = kept().filter(|other| other.open == element.open).count();
             whole_occurrences(translation, &element.open) >= wanted
-        })
+        }) && self.holds_placeholders_exactly(translation)
+    }
+
+    /// Whether `translation` holds each placeholder's original exactly as many times as the
+    /// 翻訳単位 does: one added asks the app for an argument it does not pass (`%s` twice where the
+    /// code formats one value), and one dropped leaves an argument out. The longer originals are
+    /// counted first and taken out, so `{{name}}` does not count as a `{name}` too.
+    fn holds_placeholders_exactly(&self, translation: &str) -> bool {
+        let mut originals: Vec<&str> = self
+            .elements
+            .iter()
+            .filter(|e| e.exact)
+            .map(|e| e.open.as_str())
+            .collect();
+        originals.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+        originals.dedup();
+        let mut rest = translation.to_owned();
+        for original in originals {
+            let wanted = self
+                .elements
+                .iter()
+                .filter(|e| e.exact && e.open == original)
+                .count();
+            if rest.matches(original).count() != wanted {
+                return false;
+            }
+            rest = rest.replace(original, "\0");
+        }
+        true
     }
 
     /// The text with only the tags of kept and void elements, and those elements, to translate when
@@ -203,8 +244,9 @@ impl Tagged {
 
     /// `translation` with its tags put back as the original markup, or `None` when they do not
     /// answer the elements one for one: an element missing or twice, a tag of another name or kind
-    /// under its number, or tags that cross. `write` adds the translated text between them to the
-    /// result, as the format writes it.
+    /// under its number, or tags that cross. Also `None` when the text outside the tags writes a
+    /// placeholder of its own, so the result holds it more often than the 翻訳単位 does. `write`
+    /// adds the translated text between them to the result, as the format writes it.
     pub fn restore(
         &self,
         translation: &str,
@@ -271,7 +313,7 @@ impl Tagged {
             return None;
         }
         write(&mut out, rest);
-        Some(out)
+        self.holds_placeholders_exactly(&out).then_some(out)
     }
 }
 
@@ -506,6 +548,33 @@ mod tests {
         assert!(!tagged.keeps_originals("`a` と `a`、xhttps://x"));
         assert!(tagged.keeps_originals("`a`と`a`、(https://x)."));
         assert!(tagged.keeps_originals("`a`s and `a`, https://x... or"));
+    }
+
+    #[test]
+    fn a_placeholder_must_be_there_exactly_as_often_as_in_the_unit() {
+        let mut b = Builder::default();
+        b.placeholder("code", "{name}", "{name}");
+        b.text(" and ");
+        b.placeholder("code", "{{name}}", "{{name}}");
+        b.text(" left ");
+        b.placeholder("code", "%s", "%s");
+        let tagged = b.finish().1.unwrap();
+        assert!(tagged.keeps_originals("{name} と {{name}} の残り %s"));
+        // One added, one dropped, or one standing only inside a longer one.
+        assert!(!tagged.keeps_originals("{name} と {{name}} の残り %s / %s"));
+        assert!(!tagged.keeps_originals("{name} と {{name}} の残り"));
+        assert!(!tagged.keeps_originals("{{name}} の残り %s"));
+        let restore = |translation: &str| tagged.restore(translation, plain_write);
+        assert_eq!(
+            restore("<code i=\"2\">x</code>、<code i=\"1\">y</code>、<code i=\"3\">z</code>")
+                .as_deref(),
+            Some("{{name}}、{name}、%s")
+        );
+        // Text outside the tags that writes a placeholder adds one the app does not fill in.
+        assert_eq!(
+            restore("<code i=\"1\">a</code> <code i=\"2\">b</code> <code i=\"3\">c</code> / %s"),
+            None
+        );
     }
 
     #[test]

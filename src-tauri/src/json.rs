@@ -171,7 +171,7 @@ impl<'a> Scan<'a, '_> {
                 }
                 Inline::Placeholder(range) => {
                     let shown = &value.decoded[range.clone()];
-                    b.kept_as("code", value.original(range.clone()), shown, shown);
+                    b.placeholder("code", value.original(range.clone()), shown);
                 }
             }
         }

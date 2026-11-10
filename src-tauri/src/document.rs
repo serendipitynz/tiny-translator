@@ -1467,6 +1467,39 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
     }
 
     #[test]
+    fn a_json_translation_that_adds_a_placeholder_is_not_used() {
+        let text = r#"["%s left", "Hi {name}."]"#;
+        let mut fake = Fake::new(|input| {
+            Reply::Text(
+                match input {
+                    // The tags come back, but the text around them writes one more `{name}`.
+                    "Hi <code i=\"1\">{name}</code>." => {
+                        "<code i=\"1\">{name}</code> さん、{name} さん。"
+                    }
+                    "Hi {name}." => "こんにちは、{name} さん。",
+                    // Without tags, one more `%s`: the app would need a second argument.
+                    i if i.contains('<') => "タグなし",
+                    "%s left" => "%s / %s 残り",
+                    other => panic!("not to be translated: {other:?}"),
+                }
+                .into(),
+            )
+        });
+        let (outcome, shown, _) = run_as(&mut fake, text, json());
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, r#"["%s left", "こんにちは、{name} さん。"]"#);
+        assert_eq!(
+            fake.inputs(),
+            [
+                "<code i=\"1\">%s</code> left",
+                "%s left",
+                "Hi <code i=\"1\">{name}</code>.",
+                "Hi {name}.",
+            ]
+        );
+    }
+
+    #[test]
     fn a_text_that_is_not_json_fails_before_anything_is_sent() {
         let mut fake = Fake::new(bracket);
         let format = Format::Json {
