@@ -10,3 +10,6 @@ src-tauri/gen/
 
 # Built by scripts/build-llama-server.sh; the sidecar is not tracked.
 src-tauri/binaries/
+
+# macOS signing credentials (copy .env.signing.example to create it)
+.env.signing
