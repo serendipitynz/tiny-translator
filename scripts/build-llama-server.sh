@@ -39,6 +39,13 @@ if [ "$actual" != "$commit" ]; then
   exit 1
 fi
 
+# The app starts the engine with --no-webui, so llama.cpp's Web UI would be dead weight whose npm
+# dependencies the shipped licence notice would have to list. With LLAMA_USE_PREBUILT_UI on (the
+# default) the build downloads it from Hugging Face and embeds it; with it off and no assets present
+# the server is built without one. llama.cpp embeds whatever an earlier build left in the build
+# tree's dist/, so that is removed first.
+rm -rf "$work/build/tools/ui/dist" "$work/build/tools/ui/.ui-stamp"
+
 # GGML_NATIVE=OFF keeps the CPU code free of instructions an M2 has and an M1 lacks; the model runs
 # on Metal, so the CPU path's speed hardly matters. LLAMA_CURL=OFF and LLAMA_OPENSSL=OFF: the engine
 # reads a local GGUF and must not reach the network (R1), and OpenSSL would otherwise be linked from
@@ -53,8 +60,15 @@ cmake -S "$work" -B "$work/build" \
   -DLLAMA_CURL=OFF \
   -DLLAMA_OPENSSL=OFF \
   -DLLAMA_BUILD_TESTS=OFF \
-  -DLLAMA_BUILD_EXAMPLES=OFF
+  -DLLAMA_BUILD_EXAMPLES=OFF \
+  -DLLAMA_BUILD_UI=OFF \
+  -DLLAMA_USE_PREBUILT_UI=OFF
 cmake --build "$work/build" --config Release --target llama-server -j "$(sysctl -n hw.ncpu)"
+
+if grep -q 'asset_0' "$work/build/tools/ui/ui.cpp"; then
+  echo "build-llama-server.sh: llama-server embeds a Web UI; it must be built without one" >&2
+  exit 1
+fi
 
 # The sidecar ships alone, so it may link only what every Mac has.
 foreign=$(otool -L "$work/build/bin/llama-server" | tail -n +2 | awk '{print $1}' | grep -v -e '^/System/' -e '^/usr/lib/' || true)
