@@ -83,7 +83,10 @@ function collectNpm() {
     for (const name of readdirSync(assets).filter((file) => file.endsWith('.js.map'))) {
       const map = JSON.parse(readFileSync(join(assets, name), 'utf8'))
       for (const source of map.sources) {
-        const match = resolve(assets, source).match(/^(.*\/node_modules\/(?:@[^/]+\/)?[^/]+)\//)
+        // Windows resolves with backslashes; fs accepts the forward-slash form there as well.
+        const match = resolve(assets, source)
+          .replaceAll('\\', '/')
+          .match(/^(.*\/node_modules\/(?:@[^/]+\/)?[^/]+)\//)
         if (match) {
           packageDirs.add(match[1])
         }

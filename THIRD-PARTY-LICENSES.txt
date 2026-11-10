@@ -24,7 +24,7 @@ Line endings are the only thing normalized. No text below is otherwise altered.
 
 Generated from these inputs (a digest that no longer matches means this file
 is stale; regenerate it with the commands at the top of the generator):
-  scripts/generate-third-party-licenses.mjs       sha256 248c769ff12e7fecc11906c0ba2c67adf0acbc481bb7ed8d10a2e7c18d31b5b9
+  scripts/generate-third-party-licenses.mjs       sha256 ce5a8cf617eaaaa0c4920ee14116ab4216c6e1fb225708a4c64b4c0eb82df422
   pnpm-lock.yaml                                  sha256 2bdd3ed77099a98bae404ecf6547b147bad6805467002391d4abbe717e8fa6b8
   src-tauri/Cargo.lock                            sha256 9ccbab4b1f9ec4fff3962c7184e818dbb5c5e63b91f55f70bdd5b481cacd2451
   THIRD-PARTY-NOTICES.md                          sha256 d90b57adb4deb7dd8d5c048b63494fe52c48feab47cf6ff4a30f8561bcfb2648
