@@ -1,10 +1,10 @@
 ---
 id: TASK-26
 title: macOS と Windows の配布パッケージを作る
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-10 11:03'
+updated_date: '2026-11-10 11:05'
 labels: []
 milestone: m-5
 dependencies:
@@ -60,4 +60,6 @@ ordinal: 26000
 - リリースのワークフローの試行 (2026-11-10、PR ブランチの c2f0874 に v0.1.0 のタグ、実行 42796864151): create-release・macOS (約 5 分)・Windows (約 22 分) とも成功。ライセンス表示は入力 10 件と一致。macOS は CI 上で署名・公証し、Gatekeeper の判定 3 つ (.app・.dmg・隔離属性付きの .dmg の中の .app) が通り、アイコン・ライセンス表示・Developer ID で署名した llama-server が入っていた。Windows は Vulkan SDK 1.4.363.0 を SHA-256 照合して入れ、Web UI を埋め込まない llama-server (読み込む DLL は vulkan-1・KERNEL32・ADVAPI32・WS2_32) をビルドし、インストーラーをランナーで黙ってインストールして、ライセンス表示・llama-server.exe・アイコンの埋め込みを確かめた。下書きの v0.1.0 に .dmg (13.4 MB)・setup.exe (10.9 MB)・THIRD-PARTY-LICENSES.txt が置かれた。
 - AC#2・#3 の Windows 側 (2026-11-11、オーナーの Windows 機): 下書きから setup.exe を取得してインストールし、%LOCALAPPDATA%\tiny-translator\ に管理者権限なしで入り THIRD-PARTY-LICENSES.txt と llama-server.exe があること、スタートメニュー・タスクバー・ウィンドウのアイコン、起動して翻訳できること、「アプリと機能」からのアンインストールを確かめた。
 - 警告の出方は想定と違った: ブラウザーでのダウンロード時に Keep → Keep anyway を選ぶ必要があり、保存した exe のダブルクリックでは SmartScreen は出なかった。README と doc-1 §13 の説明をこれに合わせて直した。PowerShell の gh release download v0.1.0 はダウンロードが始まらなかった (原因は調べていない。下書きは利用者の入手経路ではないので扱わない)。
+
+- PR #26 でマージ (2026-11-11)。試行で作った下書きのリリースと v0.1.0 タグはオーナーの指示で消した。
 <!-- SECTION:NOTES:END -->
