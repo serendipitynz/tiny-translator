@@ -7,9 +7,6 @@
     type FetchProgress,
     fetchModel,
     firstChoice,
-    LICENCE,
-    LICENCE_LANGUAGE_OPTIONS,
-    type LicenceLanguage,
     loadCatalog,
     progressReadout,
   } from "./lib/models";
@@ -21,6 +18,7 @@
   import Panel from "./lib/ui/Panel.svelte";
   import Progress from "./lib/ui/Progress.svelte";
   import Select from "./lib/ui/Select.svelte";
+  import LicenceText from "./LicenceText.svelte";
 
   interface Props {
     /** A model is now in the models directory; the caller closes the modal. */
@@ -35,7 +33,6 @@
   let catalog = $state<Catalog | null>(null);
   let loadFailure = $state<string | null>(null);
   let choice = $state("");
-  let licenceLanguage = $state<string>("ja");
   let agreed = $state(false);
   /** The model being fetched and how far it has got; null while nothing is fetched. */
   let running = $state<{ model: CatalogModel; progress: FetchProgress } | null>(null);
@@ -108,8 +105,6 @@
   function progressLabel(progress: FetchProgress): string {
     return progress.phase === "fetching" ? "モデルを取得しています" : "SHA-256 を照合しています";
   }
-
-  let licence = $derived(LICENCE.texts[licenceLanguage as LicenceLanguage] ?? LICENCE.texts.ja);
 </script>
 
 <Modal
@@ -155,13 +150,7 @@
 
         <Panel heading="PLaMo Community License">
           {#snippet children(headingId)}
-            <div class="licence-body">
-              <Select label="言語" options={LICENCE_LANGUAGE_OPTIONS} bind:value={licenceLanguage} />
-              <!-- Focusable so the text can be scrolled from the keyboard. -->
-              <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-              <div class="licence" role="region" aria-labelledby={headingId} tabindex="0">{licence}</div>
-              <p class="hint">{LICENCE.revised}。入手するモデルと同じコミットにある条文です。</p>
-            </div>
+            <LicenceText labelledby={headingId} />
           {/snippet}
         </Panel>
 
@@ -191,31 +180,6 @@
     display: grid;
     justify-items: start;
     gap: var(--snz-space-sm);
-  }
-
-  .licence-body {
-    display: grid;
-    justify-items: start;
-    gap: var(--snz-space-sm);
-    padding: var(--snz-space-sm) var(--snz-space-md);
-  }
-
-  .licence {
-    justify-self: stretch;
-    block-size: 14rem;
-    padding: var(--snz-space-xs) var(--snz-space-sm);
-    overflow-y: auto;
-    font-size: var(--snz-font-size-small);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    background: var(--snz-surface-nested);
-    border: var(--snz-border-line) solid var(--snz-line-divider);
-    border-radius: var(--snz-radius-sm);
-
-    &:focus-visible {
-      outline: var(--snz-border-focus) solid var(--snz-focus);
-      outline-offset: var(--snz-border-focus-offset);
-    }
   }
 
   .running {
