@@ -1,10 +1,10 @@
 ---
 id: TASK-29
 title: ライセンスの表示 (Built with PLaMo・ライセンス全文・利用者への案内) を画面に置く
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-09 20:20'
-updated_date: '2026-11-10 21:01'
+updated_date: '2026-11-10 22:30'
 labels: []
 milestone: m-5
 dependencies:
@@ -25,7 +25,7 @@ TASK-23 で PLaMo Community License (2026-11-09 改定版) を読み、アプリ
 - [x] #1 画面の常に辿れる場所に「Built with PLaMo」を表示し、README にも書いている (doc-1 §10.3 の D1)
 - [x] #2 アプリの中から PLaMo Community License の全文 (日本語版と英語版) と改定日を開ける。全文は GGUF リポジトリの LICENSE/ja・LICENSE/en を書き写さずにそのまま使っている (D2)
 - [x] #3 全文の前に、利用者が負う条件の短い案内 (D5 の 4 項目) を置いている
-- [ ] #4 macOS と Windows で、表示と全文を開く操作を確かめている
+- [x] #4 macOS と Windows で、表示と全文を開く操作を確かめている
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,4 +47,6 @@ TASK-23 で PLaMo Community License (2026-11-09 改定版) を読み、アプリ
 - D5 の 4 項目は条文の該当箇所 (第 3 条 (3)・第 1 条 (10)、第 5 条 (2)、第 5 条 (4)、第 7 条 (2)) を読み直して書き、要約であって正確な内容は全文によると添えた。
 - 確かめたこと: pnpm check (0 errors)、pnpm lint、pnpm test (103 件) が通る。Vite の開発サーバー (Chromium) で、設定 → ライセンスを表示 → 案内が全文より前に出る、日本語・英語の切り替えで全文が変わり末尾が改定日 (2026 年 11 月 9 日改定 / Revised on November 9, 2026) になる、全文の領域の名前が見出し「PLaMo Community License」になる、Escape で閉じるとフォーカスが「ライセンスを表示」に戻る、を確かめた。Rust 側は変えていないので cargo は走らせていない。
 - 確かめていないこと (AC#4): Tauri の実機 (macOS の WKWebView と Windows の WebView2) での表示と操作。オーナーの確認を待つ。
+
+- AC#4: オーナーが macOS と Windows の実機で、ライセンスの区画の表示と全文を開く操作を確かめた (2026-11-11)。
 <!-- SECTION:NOTES:END -->
