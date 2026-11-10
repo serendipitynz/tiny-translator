@@ -4,7 +4,7 @@ title: モデルの入手方法を決めて作る
 status: In Review
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-09 21:50'
+updated_date: '2026-11-10 04:32'
 labels: []
 milestone: m-5
 dependencies:
@@ -23,7 +23,7 @@ ordinal: 24000
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 同梱・初回ダウンロード・手元のファイルの取り込みを比べ、選んだ方式と理由を doc-1 §10 に書いている
-- [ ] #2 選んだ方式が macOS と Windows で動き、ダウンロードするならライセンスへの同意と SHA-256 の照合を行う
+- [x] #2 選んだ方式が macOS と Windows で動き、ダウンロードするならライセンスへの同意と SHA-256 の照合を行う
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,4 +52,12 @@ ordinal: 24000
 - 画面の判断: 入手中はモデルの選択と条文を隠して進捗だけを出す (条文の下に進捗が押し出されて見えなかったため)。「閉じる」と「停止」は同じボタンの役割を切り替え、停止した後もフォーカスが残るようにした。同意は保存せず入手のたびに求める。
 - `sha2` は `profile.dev.package.sha2` で開発時も最適化する。Cargo.lock の差分は依存の 1 行だけで、取得するクレートは増えていない。
 - テスト: cargo test 218 件 (無視 1)、cargo clippy --all-targets 警告なし、vitest 96 件、svelte-check 0 件、biome lint 0 件。
+
+- AC#2 の Windows 側 (2026-11-10、Windows 11 Home 25H2 build 26200、ja-JP・ANSI コードページ 932、`System32\curl.exe` 8.21.0 / Schannel、コミット `ca8d502`): 上の「未チェックにした理由」の 2 点はここで確かめた。
+  - pnpm test 96 件・svelte-check・biome lint・cargo test 196 件 (download::tests 13 件、無視 1 件)・clippy はいずれも通過。
+  - `TMP=C:\tt-café-検証\tmp` で `fetches_the_real_smallest_model` を実行し、0.8B を HTTPS で取得して照合できた (16.2 秒、約 35 MB/s)。curl の `--output` が `.part` のファイル名だけで、非 ASCII を含むディレクトリの中に作られることも見た。同じ TMP で `download::` の file:// のテストも通過。
+  - `pnpm tauri dev` で操作した。案内とボタンの表示、同意するまで入手できないこと、取得中の curl.exe が System32 のもの 1 つだけでコンソールが出ないこと、停止すると curl が終わり `.part` が残って続きから再開すること、取得中にウィンドウを閉じても同様なこと、照合を経て 573,126,848 バイトの `.gguf` になり `Get-FileHash` が固定値と一致すること、再起動せずにエンジンが起動して翻訳できたこと、入手済みの 0.8B が候補から消えることを確かめた。
+  - 利用者名が非 ASCII のアカウントでは確かめていない (該当するアカウントが無い)。この curl 8.21 は Unicode 対応で非 ASCII のフルパスも書けたが、ファイル名だけを渡す今の作りはそのままにした (古い curl への備えで、害はない)。
+- Windows の検証で見つかった重複を直した: モデルが無いまま起動すると、起動時のクリップボード翻訳がエンジンの英語のエラー「could not start the engine: no GGUF in …」を、モデルが無いという案内と並べて出していた。翻訳の前にモデルの有無を読み直し、無ければエンジンを呼ばずに読み上げだけにした。案内の状態を使わずに読み直すのは、実行中に手で GGUF を置いたときにすぐ翻訳できるようにするため (IPC をモックしたプレビューで両方を確認)。
+- 検証で見えたが直していないこと: 以前のコミットの GGUF (0.8B・2B ともカタログより 896 バイト小さい) を手で置いていると、`models_catalog` は名前で入手済みと見なすので、固定した版は候補に出ない。手で置いた GGUF を使うのは §10.4 で認めた使い方で、翻訳もできるため、直していない。
 <!-- SECTION:NOTES:END -->
