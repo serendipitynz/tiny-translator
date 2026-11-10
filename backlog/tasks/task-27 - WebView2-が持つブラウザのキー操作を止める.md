@@ -1,10 +1,10 @@
 ---
 id: TASK-27
 title: WebView2 が持つブラウザのキー操作を止める
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-07 00:44'
-updated_date: '2026-11-10 19:23'
+updated_date: '2026-11-10 19:28'
 labels: []
 milestone: m-2
 dependencies:
