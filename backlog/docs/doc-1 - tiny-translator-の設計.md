@@ -3,7 +3,7 @@ id: doc-1
 title: tiny-translator の設計
 type: specification
 created_date: '2026-11-05 19:39'
-updated_date: '2026-11-10 11:03'
+updated_date: '2026-11-10 19:02'
 ---
 # tiny-translator 設計
 
@@ -603,6 +603,12 @@ PLaMo 翻訳の画面に倣う。
 - ウィンドウの幅が狭いときは、原文と訳文を上下に並べる。
 - 訳文は翻訳を始めるたびに空にし、ストリーミングで埋める。
 - ショートカット: Ctrl/Cmd+Enter で翻訳、Ctrl/Cmd+Shift+C で訳文をコピー。
+- **WebView2 のブラウザ用のキー (F5・Ctrl+R の再読み込み、Ctrl+P の印刷、Ctrl+F・F3 の検索、F12 の DevTools など) は、起動時に `AreBrowserAcceleratorKeysEnabled` を切って止める** (TASK-27、2026-11-11 オーナー判断)。再読み込みは原文・訳文・進行中の翻訳を消す。
+  Tauri 2.12 は設定からも `WebviewWindowBuilder` からもこの値を渡せないので、setup で `with_webview` から `ICoreWebView2Settings3` を直接切る。
+  画面の keydown で一つずつ止めないのは、WebView2 がこの集合を列挙しきっておらず、列挙では漏れるためである。編集のキー (Ctrl+C・Ctrl+V・Ctrl+Z など) は残る。
+- **右クリックメニューは、文字を持つ入力欄 (`textarea` と `type="text"` の `input`) の中だけで出す** (TASK-27、2026-11-11 オーナー判断)。
+  それ以外の場所のメニューには再読み込み・戻る・印刷が並び、再読み込みは F5 と同じく原文を消す。`AreDefaultContextMenusEnabled` を切ると
+  入力欄の切り取り・コピー・貼り付けも消えるので、画面の `contextmenu` で止める。画面の処理なので macOS でも同じ扱いになる。
 
 ### 8.2 snz-design の部品との対応
 
@@ -632,6 +638,7 @@ PLaMo 翻訳の画面に倣う。
 
 - 音声入力 (PLaMo 翻訳の画面のマイク)。オフラインで音声を認識するには別のモデルが要り、R6 と相反する。
 - 用語集・文脈の入力欄、常体と敬体の選択。モデルは対応しているので、後のフェーズで検討する。
+- ページ内検索 (WebView2 の Ctrl+F の検索バー)。macOS の WKWebView には無く、OS で画面の機能を揃えるため、ブラウザ用のキーと一緒に止める (TASK-27)。
 
 ### 8.5 設定画面
 
