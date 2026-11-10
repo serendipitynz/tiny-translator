@@ -4,7 +4,7 @@ title: JSON の文字列のプレースホルダーを訳さずに残す
 status: In Review
 assignee: []
 created_date: '2026-11-08 21:36'
-updated_date: '2026-11-10 20:12'
+updated_date: '2026-11-10 20:17'
 labels: []
 milestone: m-3
 dependencies:
@@ -64,4 +64,11 @@ i18n のリソースファイルの文字列は `{name}`・`{{count}}`・`%s`・
 - 実機 (MacBook Air M2・2B Q4_K_M、アプリと同じ引数の llama-server に一時テストから接続): i18n 風の 10 キーの英日 (翻訳単位 21、うちタグ付き 14) と 7 キーの日英 (翻訳単位 8、うちタグ付き 7) で、タグ付きの翻訳単位はすべてタグが保たれ、訳し直しは 0 回だった。訳文は JSON として読め、キーの順序も原文と同じだった。所要時間は英日 9.8 秒、日英 5.5 秒。
 - 実機で見えた制約 (doc-1 に記録): 位置指定の無い printf が 2 つある値で、訳文が順序を入れ替えた (`Uploading %d of %d files` → `%d個のファイルのうち%d個…`)。文字列は原文のとおりだが、意味は入れ替わる。また、分岐の文を単独で訳すので短い句の訳が不自然になる (`# item in your cart` → `# カート内の商品`)。
 - 測っていないこと: アプリの画面での操作 (command の引数は変えていないので、画面側の変更は無い)、0.8B と 8B、Windows、数百キーの大きな JSON の所要時間。
+
+## レビューでの修正 (1 回目、Codex)
+
+- [P2] タグを外した訳し直しの確認が「少なくとも同じ数」だったので、`%s left` を `%s / %s 残り` と訳すと通ってしまい、引数が 1 つの書式で例外になる。プレースホルダーは「ちょうど同じ数」を求めるようにした (`tags::Tagged::holds_placeholders_exactly`)。長い記法から数えて取り除くので、`{{name}}` が `{name}` としても数えられることはない。
+- 指摘の外で直したこと: タグを戻せた訳文でも、タグの外にプレースホルダーを書き足すと同じことが起きるので、`restore` でも同じ確認をし、通らなければ戻せない訳文として扱う。
+- `Builder::kept_as` を `Builder::placeholder` に改めた (「ちょうど同じ数」の確認を受ける要素であることを名前に出すため)。Markdown・HTML の「少なくとも同じ数」は変えていない。
+- 確かめたこと: `cargo test` 229 件 (新規は tags 1・document 1)、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`。doc-1 の JSON の節に、ちょうど同じ数を求める理由を書き足した。
 <!-- SECTION:NOTES:END -->
