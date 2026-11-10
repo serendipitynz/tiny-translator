@@ -1,10 +1,10 @@
 ---
 id: TASK-27
 title: WebView2 が持つブラウザのキー操作を止める
-status: In Progress
+status: In Review
 assignee: []
 created_date: '2026-11-07 00:44'
-updated_date: '2026-11-10 19:02'
+updated_date: '2026-11-10 19:23'
 labels: []
 milestone: m-2
 dependencies:
@@ -22,11 +22,11 @@ TASK-7 で Windows (WebView2) の pnpm tauri dev を確かめたところ、F5 �
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Windows で F5・Ctrl+R・Ctrl+Shift+R を押しても画面が再読み込みされず、入力中の原文が残る
-- [ ] #2 Windows で Ctrl+P を押しても印刷プレビューが開かない
-- [ ] #3 原文の入力欄で編集のキー (Ctrl+C・Ctrl+V・Ctrl+X・Ctrl+Z・Ctrl+A) と右クリックの切り取り・コピー・貼り付けがそのまま使える
-- [ ] #4 Ctrl+F の検索バーと右クリックメニューのそれ以外の項目を残すか消すかを決め、理由を Implementation Notes に残している
-- [ ] #5 macOS でも同じ操作 (⌘R・⌘P) で再読み込みや印刷が起きないことを確かめている
+- [x] #1 Windows で F5・Ctrl+R・Ctrl+Shift+R を押しても画面が再読み込みされず、入力中の原文が残る
+- [x] #2 Windows で Ctrl+P を押しても印刷プレビューが開かない
+- [x] #3 原文の入力欄で編集のキー (Ctrl+C・Ctrl+V・Ctrl+X・Ctrl+Z・Ctrl+A) と右クリックの切り取り・コピー・貼り付けがそのまま使える
+- [x] #4 Ctrl+F の検索バーと右クリックメニューのそれ以外の項目を残すか消すかを決め、理由を Implementation Notes に残している
+- [x] #5 macOS でも同じ操作 (⌘R・⌘P) で再読み込みや印刷が起きないことを確かめている
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -81,4 +81,13 @@ macOS (`pnpm tauri dev`):
 
 10. ⌘R・⌘⇧R を押しても原文の目印が残り、⌘P で印刷のシートが出ない (AC#5)
 11. 入力欄の外の右クリックでメニューが開かず、原文欄の右クリックでは切り取り・コピー・貼り付けがあるメニューが開く
+
+## 実機での確認 (2026-11-11、オーナー)
+
+ブランチ TASK-27-webview-browser-keys (c2c13c0) を `pnpm tauri dev` で動かし、確認表の 1〜11 を試した。
+
+- Windows: 1〜8 はすべて期待どおりだった。F5・Ctrl+R・Ctrl+Shift+R を押しても再読み込みされず、目印の語が原文に残った。起動直後に最初に押した回も同じだった。そのため、「まだ確かめていないこと」に挙げた「次のナビゲーションから効く」懸念は当たらず、setup で切る形のままでよい。Ctrl+P の印刷プレビュー、Ctrl+F・F3 の検索バーは開かなかった。原文欄の編集キーと右クリックの切り取り・コピー・貼り付け、訳文欄の右クリックのコピーは効いた。入力欄の外ではメニューが開かなかった。Ctrl+Enter と Ctrl+Shift+C もこれまでどおり効いた。
+- Windows の 9: dev でも F12 で DevTools は開かなくなった。入力欄の右クリックメニューの「検査」からは開ける。
+- macOS: ⌘R・⌘⇧R で原文が残り、⌘P で印刷のシートは出なかった (10)。入力欄の外の右クリックではメニューが開かず、原文欄では開いた (11)。
+- macOS の原文欄のメニューに並んだのは OS 標準の文字入力欄の項目である: 調べる・翻訳・Google で検索・切り取り・コピー・貼り付け・スペルと文法・自動置換・変換・フォント・スピーチ・段落の方向・選択の方向・共有・自動入力・サービス、dev では Inspect Element も出る。再読み込み・戻る・印刷は無いので原文を消す経路にはならず、このまま残す。項目を一つずつ削るには WKWebView のメニューをネイティブ側で書き換える処理が要り、「調べる」「翻訳」は翻訳アプリではむしろ役に立つためである。Inspect Element は `tauri` に `devtools` 機能を付けていないのでリリースビルドには出ない。Windows の原文欄のメニューの項目は一覧として記録していない。
 <!-- SECTION:NOTES:END -->
