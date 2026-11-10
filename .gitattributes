@@ -1,0 +1,9 @@
+# THIRD-PARTY-LICENSES.txt records a sha256 of each input over the bytes on disk, and
+# src/lib/third-party-licenses.test.ts and the release workflow recompute them. Git's default
+# core.autocrlf=true on Windows (the owner's machine and the Windows runner) would convert every
+# input to CRLF and stale all of them at once; eol=lf overrides it.
+* text=auto eol=lf
+
+*.png -text
+*.ico -text
+*.icns -text
