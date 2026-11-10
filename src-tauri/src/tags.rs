@@ -86,13 +86,20 @@ impl Builder {
 
     /// Text kept as `original`, shown to the engine as `shown`.
     pub fn kept(&mut self, name: &'static str, original: &str, shown: &str) {
+        self.kept_as(name, original, shown, original);
+    }
+
+    /// Text kept as `original`, shown to the engine as `shown` and standing for `plain` in the text
+    /// without tags: a JSON string's placeholder, which the engine reads with its escapes undone
+    /// and which comes back as the original escapes it.
+    pub fn kept_as(&mut self, name: &'static str, original: &str, shown: &str, plain: &str) {
         let i = self.push(name, Kind::Kept, original.to_owned());
         self.text
             .push_str(&format!("<{name} i=\"{i}\">{shown}</{name}>"));
         let i = self.push_kept(name, Kind::Kept, original);
         self.kept_text
             .push_str(&format!("<{name} i=\"{i}\">{shown}</{name}>"));
-        self.plain.push_str(original);
+        self.plain.push_str(plain);
     }
 
     /// Markup kept as `original`, standing for `plain` in the text without tags.
