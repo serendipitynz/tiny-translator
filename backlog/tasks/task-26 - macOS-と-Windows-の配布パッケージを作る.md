@@ -4,7 +4,7 @@ title: macOS と Windows の配布パッケージを作る
 status: In Review
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-10 09:59'
+updated_date: '2026-11-10 10:04'
 labels: []
 milestone: m-5
 dependencies:
@@ -23,7 +23,7 @@ ordinal: 26000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 macOS の .dmg を署名・公証して作れる
+- [x] #1 macOS の .dmg を署名・公証して作れる
 - [ ] #2 Windows のインストーラーを作れる
 - [ ] #3 サードパーティのライセンス表示 (llama.cpp・lucide・依存クレートと npm パッケージ) を同梱している
 <!-- AC:END -->
@@ -53,4 +53,7 @@ ordinal: 26000
 - macOS: Developer ID (公証なし) で署名した pnpm tauri build で、.app・本体・llama-server の 3 つに Developer ID と hardened runtime (flags=0x10000) が付き、entitlements 無しで、署名した llama-server が Metal (Apple M2) を認識して生成できた。署名した .app を起動し、起動時のクリップボード翻訳が英→日の訳文を返して履歴に残った (テストの訳文が履歴に 1 件増えている)。Contents/Resources の icon.icns と THIRD-PARTY-LICENSES.txt はリポジトリのものと一致。.dmg は 12.9 MB。
 - 未確認 (AC はチェックしていない): 公証と staple (AC#1)、Windows の llama-server とインストーラー (AC#2)、Windows の同梱物 (AC#3 の Windows 側)。release.yml は未実行。.ps1 の Web UI を外す変更も Windows では未実行。
 - テスト: pnpm check 0 件、pnpm lint、pnpm test 100 件、cargo fmt --check、cargo clippy --all-targets -D warnings、cargo test 218 件 (無視 1)。
+
+- AC#1 (2026-11-10、この Mac、M2): .env.signing (backlog-atlas と同じ Developer ID Application: 9EYB4D9GGQ) で scripts/macos-sign-build.sh を実行した。Tauri が .app を公証 (Accepted)、スクリプトが .dmg を公証 (Accepted) して staple した。macos-verify-gatekeeper.sh で .app・.dmg・隔離属性を付けた .dmg の中の .app の 3 つが「notarized Developer ID」として受け入れられた。CI での署名・公証はシークレットの登録後に試行する。
+- レビュー 1 回目 (Codex) は P3 が 2 件: 生成スクリプトが Windows のバックスラッシュのパスで npm パッケージを見つけられない点と、ワークフローがインストールした llama-server.exe --version の終了コードを見ていない点。どちらも直した。
 <!-- SECTION:NOTES:END -->
