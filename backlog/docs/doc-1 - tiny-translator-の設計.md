@@ -3,7 +3,7 @@ id: doc-1
 title: tiny-translator の設計
 type: specification
 created_date: '2026-11-05 19:39'
-updated_date: '2026-11-10 09:38'
+updated_date: '2026-11-10 11:03'
 ---
 # tiny-translator 設計
 
@@ -875,7 +875,8 @@ entitlements は付けていない。署名した `.app` で、`llama-server` �
 Tauri は `.app` を公証するが、それを包む `.dmg` は公証しないので、`.dmg` は `xcrun notarytool` で公証して staple する。
 手元で作るときは `scripts/macos-sign-build.sh` が同じことを行い、`scripts/macos-verify-gatekeeper.sh` で確かめる。シークレットは `scripts/setup-ci-signing-secrets.sh` で登録する。
 
-**Windows はコード署名しない.** backlog-atlas・mallow と同じ。初回の起動で SmartScreen の警告が出ることを README に書いた。
+**Windows はコード署名しない.** backlog-atlas・mallow と同じ。2026-11-11 にオーナーが Windows で確かめたところ、警告はブラウザーでのダウンロード時に出て (「保持する」を選ぶ)、
+保存したインストーラーはダブルクリックで警告なく始まった。起動時に SmartScreen が出た場合も含め、README に手順を書いた。
 インストーラーは Tauri の NSIS の既定 (利用者ごとのインストール、`%LOCALAPPDATA%\tiny-translator\`、管理者権限なし) のままにする。MSI は作らない。
 
 **ライセンス表示.** 配布物には `THIRD-PARTY-LICENSES.txt` を `bundle.resources` で入れる (macOS は `Contents/Resources/`、Windows はインストール先)。
