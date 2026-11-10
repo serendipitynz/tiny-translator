@@ -1,0 +1,348 @@
+name: Release
+
+# Build the macOS and Windows bundles for a version tag and attach them to a DRAFT GitHub release
+# (TASK-26, doc-1 §13). Trigger by pushing a tag `vMAJOR.MINOR.PATCH`, or run it from the Actions
+# tab with an existing tag. Nothing here publishes the release: check the assets and the generated
+# notes, then publish it by hand.
+#
+# Adapted from backlog-atlas's release workflow, with three differences:
+# - Each platform first builds the translation engine (llama-server) from source with the repo's
+#   own script, as a developer does (README). The Windows runner gets the Vulkan SDK for it.
+# - `pnpm tauri build` and `gh release upload` instead of tauri-action, so an asset reaches the
+#   draft only after the checks on it have passed, and no updater archive is uploaded (the app has
+#   no updater until TASK-30).
+# - macOS is Apple Silicon only and there is no Linux build (doc-1 §4.2).
+#
+# The macOS .app is signed with a Developer ID Application certificate and notarized by Tauri; the
+# .dmg is notarized and stapled here, because Tauri does not. The Windows installer is unsigned
+# (README). The test suite is not run here; it runs before the PR that the tag points at merges.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build (e.g. v0.1.0). It must already exist; a draft release is created for it.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # An unsigned macOS build is refused by Gatekeeper, so a run without the secrets would leave a
+      # draft with no usable macOS asset. Fail before the draft exists.
+      - name: Verify the macOS signing secrets are registered
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -eu
+          missing=''
+          for var in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                     APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            eval "value=\${$var:-}"
+            [ -n "$value" ] || missing="$missing $var"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing. Register them with 'scripts/setup-ci-signing-secrets.sh path/to/DeveloperID.p12' and re-run." >&2
+            exit 1
+          fi
+
+      - name: Verify the release tag exists (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Tag '$RELEASE_TAG' does not exist. Create and push it first: git tag $RELEASE_TAG && git push origin $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      # Tauri names the bundles after tauri.conf.json's version, not the tag, so a tag pushed
+      # without bumping the manifests would ship assets named after the previous version.
+      - name: Verify the tag is vMAJOR.MINOR.PATCH and matches the manifests
+        run: |
+          set -eu
+          expected="${RELEASE_TAG#v}"
+          if [ "v$expected" != "$RELEASE_TAG" ] || ! printf '%s' "$expected" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::The tag is '$RELEASE_TAG'; a release tag must be vMAJOR.MINOR.PATCH." >&2
+            exit 1
+          fi
+          fail=0
+          check() {
+            if [ "$2" != "$expected" ]; then
+              echo "::error::$1 declares version '$2' but the tag is '$RELEASE_TAG'." >&2
+              fail=1
+            fi
+          }
+          json_version() {
+            grep -m1 '"version"' "$1" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'
+          }
+          check package.json "$(json_version package.json)"
+          check src-tauri/tauri.conf.json "$(json_version src-tauri/tauri.conf.json)"
+          check src-tauri/Cargo.toml \
+            "$(sed -n '/^\[package\]/,/^\[/{s/^version = "\([^"]*\)".*/\1/p;}' src-tauri/Cargo.toml | head -1)"
+          check src-tauri/Cargo.lock \
+            "$(sed -n '/^name = "tiny-translator"$/,/^$/s/^version = "\([^"]*\)"$/\1/p' src-tauri/Cargo.lock | head -1)"
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Set all four to '$expected' on the tagged commit (Cargo.lock through 'cargo update -p tiny-translator'), move the tag, and re-run." >&2
+          fi
+          exit "$fail"
+
+      # Every bundle carries THIRD-PARTY-LICENSES.txt, so a stale one is a defect in every asset.
+      # src/lib/third-party-licenses.test.ts makes the same comparison; the suite is not run here.
+      - name: Verify the third-party notice describes the tagged tree
+        shell: python
+        run: |
+          import hashlib, re, sys
+          from pathlib import Path
+
+          notice = Path("THIRD-PARTY-LICENSES.txt")
+          if not notice.is_file():
+              sys.exit("::error::THIRD-PARTY-LICENSES.txt is missing from the tagged tree.")
+          header = notice.read_text(encoding="utf-8").split("SECTION 1")[0]
+          recorded = re.findall(r"^ {2}(\S+) +sha256 ([0-9a-f]{64})$", header, re.MULTILINE)
+          if not recorded:
+              sys.exit("::error::THIRD-PARTY-LICENSES.txt records no input digests. Regenerate it.")
+          stale = [
+              path
+              for path, digest in recorded
+              if not Path(path).is_file() or hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest
+          ]
+          if stale:
+              sys.exit(
+                  f"::error::THIRD-PARTY-LICENSES.txt no longer describes {', '.join(stale)}. "
+                  "Regenerate it with scripts/generate-third-party-licenses.mjs, commit it, move the tag, and re-run."
+              )
+          print(f"THIRD-PARTY-LICENSES.txt matches all {len(recorded)} of its inputs.")
+
+      # Reuse a draft for this tag on a re-run, but never a published release: rebuilding would
+      # replace assets people have been downloading.
+      - name: Create (or reuse) the draft release with generated notes
+        run: |
+          set -eu
+          published=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$RELEASE_TAG\" and (.draft | not)) | .id" | head -1)
+          if [ -n "$published" ]; then
+            echo "::error::Release $RELEASE_TAG is already published (id $published). Tag a new version instead." >&2
+            exit 1
+          fi
+          id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$RELEASE_TAG\" and .draft) | .id" | head -1)
+          if [ -z "$id" ]; then
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$RELEASE_TAG" \
+              -f name="tiny-translator $RELEASE_TAG" \
+              -F draft=true \
+              -F prerelease=false \
+              -F generate_release_notes=true \
+              --jq .id)
+            echo "Created draft release $id for $RELEASE_TAG"
+          else
+            echo "Reusing draft release $id for $RELEASE_TAG"
+          fi
+
+      - name: Attach the third-party notice to the draft release
+        run: gh release upload "$RELEASE_TAG" THIRD-PARTY-LICENSES.txt --clobber -R "$GITHUB_REPOSITORY"
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      # The version the Windows sidecar was built and measured with (TASK-12) and the one
+      # THIRD-PARTY-NOTICES.md names. The digest is the one LunarG publishes for this installer
+      # (https://sdk.lunarg.com/sdk/sha/1.4.363.0/windows/vulkansdk-windows-X64-1.4.363.0.exe.txt).
+      - name: Install the Vulkan SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VULKAN_VERSION: 1.4.363.0
+          VULKAN_SHA256: 94a82d378f7a5e3e54c9db7d2fb7016af136e14ac0a18dbf0f2f67a36352d141
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP "vulkansdk-$env:VULKAN_VERSION.exe"
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe" -OutFile $installer
+          $actual = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLower()
+          if ($actual -ne $env:VULKAN_SHA256) {
+            Write-Error "::error::Vulkan SDK installer digest is $actual, expected $env:VULKAN_SHA256"
+            exit 1
+          }
+          $root = "C:\VulkanSDK\$env:VULKAN_VERSION"
+          & $installer --root $root --accept-licenses --default-answer --confirm-command install | Out-Host
+          if (-not (Test-Path (Join-Path $root 'Bin\glslc.exe'))) {
+            Write-Error "::error::the Vulkan SDK installed no glslc.exe under $root"
+            exit 1
+          }
+          "VULKAN_SDK=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build the translation engine (macOS, Metal)
+        if: runner.os == 'macOS'
+        run: ./scripts/build-llama-server.sh
+
+      - name: Build the translation engine (Windows, Vulkan)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-llama-server.ps1
+
+      # Tauri imports APPLE_CERTIFICATE into a temporary keychain, signs the .app with hardened
+      # runtime and notarizes it. The secrets are expanded on the macOS job only, so no Windows
+      # build script or build dependency ever sees them.
+      - name: Build, sign and notarize the macOS bundle
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm tauri build
+
+      - name: Build the Windows installer
+        if: runner.os == 'Windows'
+        run: pnpm tauri build
+
+      - name: Notarize and staple the macOS .dmg
+        if: runner.os == 'macOS'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -eu
+          dmg=$(find src-tauri/target/release/bundle/dmg -name '*.dmg' -print -quit 2>/dev/null || true)
+          if [ -z "$dmg" ]; then
+            echo "::error::No .dmg was produced." >&2
+            exit 1
+          fi
+          xcrun notarytool submit "$dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$dmg"
+
+      # Signature, Developer ID authority, hardened runtime, stapled tickets, and Gatekeeper's
+      # verdict on the .app, the .dmg, and the .app inside a quarantined copy of the .dmg.
+      - name: Verify the macOS bundle passes Gatekeeper
+        if: runner.os == 'macOS'
+        run: |
+          set -eu
+          ./scripts/macos-verify-gatekeeper.sh \
+            src-tauri/target/release/bundle/macos/*.app \
+            src-tauri/target/release/bundle/dmg/*.dmg
+
+      - name: Verify the macOS bundle's contents
+        if: runner.os == 'macOS'
+        run: |
+          set -eu
+          app=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
+          cmp "$app/Contents/Resources/icon.icns" src-tauri/icons/icon.icns
+          cmp "$app/Contents/Resources/THIRD-PARTY-LICENSES.txt" THIRD-PARTY-LICENSES.txt
+          engine="$app/Contents/MacOS/llama-server"
+          [ -x "$engine" ] || { echo "::error::$app carries no llama-server." >&2; exit 1; }
+          info=$(codesign -dv --verbose=4 "$engine" 2>&1)
+          case "$info" in *"Authority=Developer ID Application"*) ;; *) echo "::error::llama-server is not signed with the Developer ID." >&2; exit 1 ;; esac
+          case "$info" in *"(runtime)"*) ;; *) echo "::error::llama-server is not signed with hardened runtime." >&2; exit 1 ;; esac
+          "$engine" --version
+          echo "icon, notice and a Developer ID-signed llama-server are in $app."
+
+      # The installer is run silently into a scratch directory: an NSIS installer cannot be listed
+      # without installing it, and the runner is thrown away afterwards. The icon has no file of
+      # its own on Windows: build.rs embeds icon.ico into the executable, each entry as the PNG it
+      # already is, so the largest entry's bytes are looked for inside the installed executable.
+      - name: Verify the Windows installer's contents
+        if: runner.os == 'Windows'
+        shell: python
+        run: |
+          import hashlib, os, struct, subprocess, sys
+          from pathlib import Path
+
+          setup = next(iter(sorted(Path("src-tauri/target/release/bundle/nsis").glob("*-setup.exe"))), None)
+          if setup is None:
+              sys.exit("::error::No NSIS installer was produced.")
+          dest = Path(os.environ["RUNNER_TEMP"]) / "tt-install"
+          # /D must be the last argument and unquoted.
+          result = subprocess.run([str(setup), "/S", f"/D={dest}"])
+          if result.returncode != 0:
+              sys.exit(f"::error::{setup.name} /S exited with {result.returncode}.")
+
+          def digest(path):
+              return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+          notice = dest / "THIRD-PARTY-LICENSES.txt"
+          if not notice.is_file() or digest(notice) != digest("THIRD-PARTY-LICENSES.txt"):
+              sys.exit(f"::error::{setup.name} does not install the committed THIRD-PARTY-LICENSES.txt.")
+          engine = dest / "llama-server.exe"
+          if not engine.is_file():
+              sys.exit(f"::error::{setup.name} does not install llama-server.exe.")
+          version = subprocess.run([str(engine), "--version"], capture_output=True, text=True)
+          print(version.stdout + version.stderr)
+          if version.returncode != 0:
+              sys.exit(f"::error::the installed llama-server.exe --version exited with {version.returncode}.")
+
+          exe = dest / "tiny-translator.exe"
+          ico = Path("src-tauri/icons/icon.ico").read_bytes()
+          count = struct.unpack_from("<H", ico, 4)[0]
+          size, offset = max(
+              (struct.unpack_from("<II", ico, 6 + i * 16 + 8) for i in range(count)),
+              key=lambda entry: entry[0],
+          )
+          if exe.read_bytes().find(ico[offset:offset + size]) < 0:
+              sys.exit(f"::error::{exe.name} does not embed icon.ico's largest entry.")
+          print(f"{setup.name} installs the notice, llama-server.exe, and an executable carrying the icon.")
+
+      - name: Upload the macOS .dmg to the draft release
+        if: runner.os == 'macOS'
+        run: gh release upload "$RELEASE_TAG" src-tauri/target/release/bundle/dmg/*.dmg --clobber -R "$GITHUB_REPOSITORY"
+
+      - name: Upload the Windows installer to the draft release
+        if: runner.os == 'Windows'
+        shell: bash
+        run: gh release upload "$RELEASE_TAG" src-tauri/target/release/bundle/nsis/*-setup.exe --clobber -R "$GITHUB_REPOSITORY"

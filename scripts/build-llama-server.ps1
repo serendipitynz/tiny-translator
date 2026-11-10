@@ -76,6 +76,11 @@ if ($actual -ne $commit) {
     Fail "$tag is $actual, expected $commit"
 }
 
+# Built without llama.cpp's Web UI, as in build-llama-server.sh: the app passes --no-webui, and an
+# embedded UI would add npm dependencies to the shipped licence notice. llama.cpp embeds whatever
+# an earlier build left in the build tree's dist/, so that is removed first.
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $work 'build\tools\ui\dist'), (Join-Path $work 'build\tools\ui\.ui-stamp')
+
 # GGML_NATIVE=OFF limits the CPU code to AVX2: a native build on a Zen 4 machine (the Ryzen Z1) would
 # use AVX-512, which Zen 3 and older lack; the model runs on the GPU, so the CPU path's speed hardly
 # matters. GGML_OPENMP=OFF and the static MSVC runtime (MultiThreaded) keep vcomp140.dll and the
@@ -93,10 +98,16 @@ Invoke-Native $cmake @(
     '-DLLAMA_CURL=OFF',
     '-DLLAMA_OPENSSL=OFF',
     '-DLLAMA_BUILD_TESTS=OFF',
-    '-DLLAMA_BUILD_EXAMPLES=OFF'
+    '-DLLAMA_BUILD_EXAMPLES=OFF',
+    '-DLLAMA_BUILD_UI=OFF',
+    '-DLLAMA_USE_PREBUILT_UI=OFF'
 )
 Invoke-Native $cmake @('--build', (Join-Path $work 'build'), '--config', 'Release', '--target', 'llama-server', '--parallel')
 $built = Join-Path $work 'build\bin\Release\llama-server.exe'
+
+if (Select-String -Quiet -SimpleMatch 'asset_0' (Join-Path $work 'build\tools\ui\ui.cpp')) {
+    Fail 'llama-server embeds a Web UI; it must be built without one'
+}
 
 # The sidecar ships alone, so it may load only what every Windows machine has: DLLs of the OS
 # itself, and the Vulkan loader, which every GPU driver installs. A DLL in System32 is not enough:
