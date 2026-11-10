@@ -10,6 +10,7 @@
     TARGET_OPTIONS,
   } from "./lib/languages";
   import { copyText, launchClipboard, onLaunchedAgain, pasteClipboard } from "./lib/clipboard";
+  import { allowsContextMenu } from "./lib/contextmenu";
   import { formatOptions } from "./lib/formats";
   import { type HistoryEntry, restore } from "./lib/history";
   import HistoryModal from "./HistoryModal.svelte";
@@ -217,6 +218,12 @@
     return onLaunchedAgain(() => void translateClipboard());
   });
 
+  function onContextmenu(event: MouseEvent) {
+    if (!allowsContextMenu(event.target as Element | null)) {
+      event.preventDefault();
+    }
+  }
+
   function onKeydown(event: KeyboardEvent) {
     if (isCopyTranslationShortcut(event)) {
       event.preventDefault();
@@ -326,7 +333,7 @@
   void checkModels();
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} oncontextmenu={onContextmenu} />
 
 <div class="screen">
   <header class="app-header">
