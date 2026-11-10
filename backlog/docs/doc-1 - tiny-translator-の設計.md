@@ -3,7 +3,7 @@ id: doc-1
 title: tiny-translator の設計
 type: specification
 created_date: '2026-11-05 19:39'
-updated_date: '2026-11-09 21:41'
+updated_date: '2026-11-10 09:38'
 ---
 # tiny-translator 設計
 
@@ -87,6 +87,9 @@ Windows on ARM と Linux は対象外とし、需要が出たら検討する。
 `scripts/build-llama-server.sh` が TASK-1 と同じ b12110 (commit `cd959bae9`) を `BUILD_SHARED_LIBS=OFF`・`GGML_METAL_EMBED_LIBRARY=ON`・
 `LLAMA_CURL=OFF`・`LLAMA_OPENSSL=OFF`・`GGML_NATIVE=OFF` (M1 で動かない命令を使わないため) でビルドし、`src-tauri/binaries/` (追跡しない) へ置く。
 できるバイナリは約 23 MB で、OS の外のライブラリをリンクしていない (スクリプトが `otool -L` で確かめる)。
+両スクリプトは llama.cpp の Web UI を埋め込まずにビルドする (`LLAMA_BUILD_UI=OFF`・`LLAMA_USE_PREBUILT_UI=OFF`。TASK-26)。
+既定のビルドはビルドの途中で Hugging Face から Web UI を取得してバイナリに埋め込むが、アプリは `--no-webui` で起動するので使わず、
+埋め込むと配布物のライセンス表示 (§13) に Web UI の npm パッケージが加わる。外した macOS 版は約 20 MB である。
 
 **Windows の Vulkan 版も同じ理由でソースから静的にビルドする** (TASK-12、2026-11-08 オーナー判断)。GitHub リリースの win-vulkan 版は
 `llama.dll` と `ggml-*.dll` に分かれている。`scripts/build-llama-server.ps1` が同じ b12110 を `GGML_VULKAN=ON`・`BUILD_SHARED_LIBS=OFF`・
@@ -843,3 +846,50 @@ Cargo.lock に既にあった 0.10.9 なので、取得するクレートは増�
 | m-5 配布の準備 | モデルの入手方法、ライセンス表示、署名とパッケージ、配布するかどうかの判断 | 配布するかどうかが決まり、配布するなら macOS と Windows のパッケージが作れる |
 
 m-0〜m-4 の各タスクは macOS で受入条件を満たせば完了とし、Windows での確認は各マイルストーンの最後に置いた Windows 確認のタスクで行う。
+
+## 13. 配布物 (TASK-26)
+
+配布物は macOS (Apple Silicon) の `.dmg` と Windows (x86_64) の NSIS インストーラー (`*-setup.exe`) の 2 つで、
+GitHub Actions の `.github/workflows/release.yml` (以下、リリースのワークフロー) が作る (2026-11-10 オーナー判断)。
+Intel の Mac と Linux は §4.2 のとおり対象外なので作らない。リポジトリは公開時に public にする。
+
+**手元ではなく GitHub Actions で作る理由.** Windows の翻訳エンジンは MSVC と Vulkan SDK でビルドするので、手元で作るなら毎回 Windows 機が要る。
+リリースのワークフローは Windows のランナーに Vulkan SDK を入れ、両 OS で `scripts/build-llama-server.*` を開発時と同じに走らせてから
+`pnpm tauri build` を行う。自動更新 (TASK-30) も、同じリリースに更新物を置く形で足せる。構成は backlog-atlas・mallow のリリースのワークフローにならった。
+
+**流れ.** `vX.Y.Z` のタグを push すると、リリースのワークフローは次を行う。
+
+1. 署名用のシークレットがそろっていること、タグが `vMAJOR.MINOR.PATCH` の形で `package.json`・`tauri.conf.json`・`Cargo.toml`・`Cargo.lock` の版と一致すること、
+   `THIRD-PARTY-LICENSES.txt` が今の依存から作られたものであることを確かめ、下書きのリリースを作る。公開済みのリリースがあれば作り直さずに止まる。
+2. macOS と Windows で翻訳エンジンとアプリをビルドする。Windows の Vulkan SDK は TASK-12 と同じ 1.4.363.0 を、LunarG が公表する SHA-256 と照合してから入れる。
+3. 配布物を検査し、通ったものだけを下書きのリリースへ置く。macOS は署名・hardened runtime・公証の staple・Gatekeeper の判定
+   (隔離属性を付けた `.dmg` の中の `.app` を含む)、`icon.icns` とライセンス表示が同梱されていること、`llama-server` が Developer ID で署名されていること。
+   Windows はインストーラーをランナーの一時フォルダーへ黙ってインストールし、ライセンス表示と `llama-server.exe` が入ること、実行ファイルにアイコンが埋め込まれていること。
+4. オーナーが下書きを確かめて手で公開する。リリースのワークフローは公開しない。
+
+tauri-action は使わず、`pnpm tauri build` と `gh release upload` で行う。tauri-action はビルドした物をその場でアップロードするので検査の前に下書きへ載り、
+更新の仕組みが無くても macOS の `.app.tar.gz` を置く (backlog-atlas はそれを後から消している)。
+
+**macOS の署名と公証.** Developer ID Application の証明書で署名し、hardened runtime を有効にする (Tauri の既定)。Tauri は sidecar の `llama-server` も同じ証明書で署名する。
+entitlements は付けていない。署名した `.app` で、`llama-server` が Metal (Apple M2) を使い、起動時のクリップボード翻訳が訳文を返すことを確かめた。
+Tauri は `.app` を公証するが、それを包む `.dmg` は公証しないので、`.dmg` は `xcrun notarytool` で公証して staple する。
+手元で作るときは `scripts/macos-sign-build.sh` が同じことを行い、`scripts/macos-verify-gatekeeper.sh` で確かめる。シークレットは `scripts/setup-ci-signing-secrets.sh` で登録する。
+
+**Windows はコード署名しない.** backlog-atlas・mallow と同じ。初回の起動で SmartScreen の警告が出ることを README に書いた。
+インストーラーは Tauri の NSIS の既定 (利用者ごとのインストール、`%LOCALAPPDATA%\tiny-translator\`、管理者権限なし) のままにする。MSI は作らない。
+
+**ライセンス表示.** 配布物には `THIRD-PARTY-LICENSES.txt` を `bundle.resources` で入れる (macOS は `Contents/Resources/`、Windows はインストール先)。
+`scripts/generate-third-party-licenses.mjs` (backlog-atlas のものを移した) が作り、リポジトリにコミットする。中身は次の 3 つである。
+
+- `THIRD-PARTY-NOTICES.md` の全文: 翻訳エンジン (llama.cpp と ggml、`llama-server` にリンクされる llama.cpp の `vendor/` のライブラリ、Windows 版の Vulkan-Headers) と lucide の図形。
+  どれもロックファイルに現れないので手で書き、条文は固定したコミットのファイルから書き写さずに取った。
+- npm: 画面のビルドに実際に入るパッケージ。ソースマップから数えるので、devDependencies の svelte の実行時コードも含む (`pnpm licenses --prod` では漏れる)。
+- クレート: `aarch64-apple-darwin` と `x86_64-pc-windows-msvc` で解決されるものの和。条文を同梱しないクレートは `scripts/spdx/` の標準の条文で補う。
+
+ファイルの先頭に入力 (生成スクリプト・ロックファイル・`THIRD-PARTY-NOTICES.md`・`scripts/spdx/`) の SHA-256 を書き、`src/lib/third-party-licenses.test.ts` とリリースのワークフローが
+今の入力と照らす。Windows のチェックアウトで改行が CRLF に変わると照合が崩れるので、`.gitattributes` で LF に固定した。
+モデル (PLaMo) は配布物に入らないので、ここには含めない (§10)。
+
+**アイコン.** オーナーが用意した画像 (772px、角丸の形が画像の端まで届く) を 1024px の透明な画像の中央に 824px で置いた `src-tauri/app-icon.png` を元に、
+`pnpm tauri icon` で `.icns`・`.ico`・png を作った。Apple の標準グリッド (1024 に対して角丸の正方形が 824) に合わせ、Dock で他のアプリより大きく見えないようにするためである
+(backlog-atlas TASK-167 と同じ理由)。モバイル用の出力は消した。
