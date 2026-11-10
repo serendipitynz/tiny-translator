@@ -1,10 +1,10 @@
 ---
 id: TASK-28
 title: JSON の文字列のプレースホルダーを訳さずに残す
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-08 21:36'
-updated_date: '2026-11-10 20:17'
+updated_date: '2026-11-10 20:53'
 labels: []
 milestone: m-3
 dependencies:
