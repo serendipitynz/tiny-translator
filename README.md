@@ -67,7 +67,9 @@ cargo fmt --check
 GitHub Actions の `.github/workflows/release.yml` が作る (設計は doc-1 §13)。
 
 - macOS の `.app` と `.dmg` は Developer ID で署名し、Apple の公証を受けている。
-- Windows のインストーラーはコード署名していない。初めて開くと SmartScreen が「Windows によって PC が保護されました」を出すので、
+- Windows のインストーラーはコード署名していない。ブラウザーでダウンロードすると、よく使われていないファイルとして警告が出るので、
+  「保存」の横のメニューから「保持する」、続けて「保持する」(英語版では Keep → Keep anyway) を選ぶ。そうして保存したインストーラーは、
+  2026-11-11 の確認ではダブルクリックで警告なく始まった。開いたときに SmartScreen が「Windows によって PC が保護されました」を出したら、
   「詳細情報」から「実行」を選ぶ。インストール先は利用者ごとの `%LOCALAPPDATA%\tiny-translator\` で、管理者権限は要らない。
 - どちらにもモデルは入っていない。初回に「モデルを入手」で取得する。
 - 同梱するソフトウェアのライセンスは `THIRD-PARTY-LICENSES.txt` にあり、配布物にも入る
