@@ -51,6 +51,8 @@ pub fn run() {
         )
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
+            #[cfg(target_os = "windows")]
+            disable_browser_keys(app);
             let data_dir = app.path().app_data_dir()?;
             fs::create_dir_all(&data_dir)?;
             let settings = Arc::new(SettingsStore::load(&data_dir));
@@ -97,6 +99,38 @@ pub fn run() {
             RunEvent::Reopen { .. } => launched_again(app),
             _ => {}
         });
+}
+
+/// Turns off WebView2's browser keys: F5 and Ctrl+R reload, Ctrl+P prints, Ctrl+F and F3 find, F12
+/// opens DevTools (TASK-27). A reload discards the source text and a translation in progress, and
+/// none of these exist in WKWebView. Editing keys stay. The keys are not listed and stopped one by
+/// one in the screen's keydown, because WebView2 documents its set as open-ended.
+#[cfg(target_os = "windows")]
+fn disable_browser_keys(app: &tauri::App) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows_core::Interface;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let result = window.with_webview(|webview| {
+        // SAFETY: the controller is this window's own, and `with_webview` runs this on the main
+        // thread, where WebView2 has to be called.
+        let set = unsafe {
+            webview
+                .controller()
+                .CoreWebView2()
+                .and_then(|core| core.Settings())
+                .and_then(|settings| settings.cast::<ICoreWebView2Settings3>())
+                .and_then(|settings| settings.SetAreBrowserAcceleratorKeysEnabled(false))
+        };
+        if let Err(err) = set {
+            eprintln!("could not turn off WebView2's browser keys: {err}");
+        }
+    });
+    if let Err(err) = result {
+        eprintln!("could not reach the main webview to turn off its browser keys: {err}");
+    }
 }
 
 fn launched_again(app: &AppHandle) {
