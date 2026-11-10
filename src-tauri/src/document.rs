@@ -1375,6 +1375,130 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
         assert_eq!(long.matches('\n').count(), 59);
     }
 
+    fn json() -> Format {
+        Format::Json {
+            untranslated_keys: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn json_placeholders_come_back_as_written_whatever_the_translation_holds() {
+        let text = r#"{
+  "greet": "Hi {name}, you have %1$d new {{kind}}",
+  "files": "{count, plural, =0 {No files} one {# file} other {# files}} in \"{dir}\"",
+  "only": "%s"
+}"#;
+        let mut fake = Fake::new(|input| {
+            Reply::Text(
+                match input {
+                    // Reordered, with what is inside the tags changed.
+                    "Hi <code i=\"1\">{name}</code>, you have <code i=\"2\">%1$d</code> new <code i=\"3\">{{kind}}</code>" => {
+                        "<code i=\"1\">{名前}</code>さん、新しい<code i=\"3\">{{種類}}</code>が<code i=\"2\">%d</code>件"
+                    }
+                    "No files" => "ファイルなし",
+                    "<code i=\"1\">#</code> file" | "<code i=\"1\">#</code> files" => {
+                        "<code i=\"1\"># </code>件のファイル"
+                    }
+                    "in \"<code i=\"1\">{dir}</code>\"" => "「<code i=\"1\">{フォルダ}</code>」の中",
+                    other => panic!("not to be translated: {other:?}"),
+                }
+                .into(),
+            )
+        });
+        let (outcome, shown, updates) = run_as(&mut fake, text, json());
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(
+            shown,
+            r#"{
+  "greet": "{name}さん、新しい{{kind}}が%1$d件",
+  "files": "{count, plural, =0 {ファイルなし} one {#件のファイル} other {#件のファイル}} 「{dir}」の中",
+  "only": "%s"
+}"#
+        );
+        assert!(serde_json::from_str::<serde_json::Value>(&shown).is_ok());
+        for update in &updates {
+            assert!(!update.contains(" i=\""), "{update}");
+        }
+    }
+
+    #[test]
+    fn a_json_value_is_made_again_without_tags_and_kept_when_that_changes_a_placeholder() {
+        let text = r#"["Hi {name}!", "Bye {name}.", "%s left", "Next."]"#;
+        let mut fake = Fake::new(|input| {
+            Reply::Text(
+                match input {
+                    // Tags dropped, so each goes again without them.
+                    i if i.contains('<') => "タグなし",
+                    // Holds the placeholder as written: the translation stands.
+                    "Hi {name}!" => "こんにちは、{name}!",
+                    // Changes it: the value stays as the original.
+                    "Bye {name}." => "さようなら、{名前}。",
+                    // Drops it: the value stays as the original too.
+                    "%s left" => "残り",
+                    "Next." => "次。",
+                    other => panic!("not to be translated: {other:?}"),
+                }
+                .into(),
+            )
+        });
+        let (outcome, shown, _) = run_as(&mut fake, text, json());
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(
+            shown,
+            r#"["こんにちは、{name}!", "Bye {name}.", "%s left", "次。"]"#
+        );
+        assert_eq!(
+            fake.inputs(),
+            [
+                "Hi <code i=\"1\">{name}</code>!",
+                "Hi {name}!",
+                "Bye <code i=\"1\">{name}</code>.",
+                "Bye {name}.",
+                "<code i=\"1\">%s</code> left",
+                "%s left",
+                "Next.",
+            ]
+        );
+        // The value kept as the original leaves no history for the next one.
+        assert_eq!(
+            fake.prompts.last().unwrap(),
+            &translate::prompt("Next.", "ja", Some("en"), None)
+        );
+    }
+
+    #[test]
+    fn a_json_translation_that_adds_a_placeholder_is_not_used() {
+        let text = r#"["%s left", "Hi {name}."]"#;
+        let mut fake = Fake::new(|input| {
+            Reply::Text(
+                match input {
+                    // The tags come back, but the text around them writes one more `{name}`.
+                    "Hi <code i=\"1\">{name}</code>." => {
+                        "<code i=\"1\">{name}</code> さん、{name} さん。"
+                    }
+                    "Hi {name}." => "こんにちは、{name} さん。",
+                    // Without tags, one more `%s`: the app would need a second argument.
+                    i if i.contains('<') => "タグなし",
+                    "%s left" => "%s / %s 残り",
+                    other => panic!("not to be translated: {other:?}"),
+                }
+                .into(),
+            )
+        });
+        let (outcome, shown, _) = run_as(&mut fake, text, json());
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, r#"["%s left", "こんにちは、{name} さん。"]"#);
+        assert_eq!(
+            fake.inputs(),
+            [
+                "<code i=\"1\">%s</code> left",
+                "%s left",
+                "Hi <code i=\"1\">{name}</code>.",
+                "Hi {name}.",
+            ]
+        );
+    }
+
     #[test]
     fn a_text_that_is_not_json_fails_before_anything_is_sent() {
         let mut fake = Fake::new(bracket);
