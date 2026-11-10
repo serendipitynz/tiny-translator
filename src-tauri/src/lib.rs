@@ -8,6 +8,7 @@ mod html;
 mod json;
 mod language;
 mod markdown;
+mod placeholders;
 mod repetition;
 mod settings;
 mod tags;

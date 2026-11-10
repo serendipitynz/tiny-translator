@@ -4,12 +4,15 @@
 //! `false`, `null`, the punctuation and the whitespace between them — is copied from the original,
 //! so the translation keeps the original's structure, key order and layout exactly. The value's
 //! escapes are undone before it goes to the engine, and the translation is escaped again as it is
-//! written back.
+//! written back. Its placeholders go as kept elements and come back as written, and the messages
+//! of an ICU argument that chooses one are 翻訳単位 of their own (`placeholders.rs`).
 
 use std::borrow::Cow;
 use std::ops::Range;
 
 use crate::document::{Lines, Segment, Unit};
+use crate::placeholders::{self, Inline};
+use crate::tags::Builder;
 
 /// `text` as the 翻訳単位 of its string values and the original between them, or why `text` is not
 /// JSON. The values under a key named in `untranslated_keys` stay as they are, at any depth and
@@ -134,41 +137,125 @@ impl<'a> Scan<'a, '_> {
         start..self.at - 1
     }
 
-    /// Takes the string content at `range` as a 翻訳単位, leaving out the whitespace around it,
-    /// which an i18n message may need (`"Name: "`) and the engine would drop. A value without
-    /// letters (`""`, `"42"`, `"—"`) is not sent, as a Markdown block without them is not.
+    /// Takes the string content at `range` as 翻訳単位: the whole value, or where an ICU argument
+    /// chooses a message, each of its messages and the text around it (`placeholders.rs`). The
+    /// placeholders go to the engine as kept elements, so the translation holds them as the original
+    /// writes them.
     fn unit(&mut self, range: Range<usize>) {
-        let raw = &self.text[range.clone()];
-        let chars = escaped_chars(raw);
-        let Some(first) = chars.iter().position(|(_, c)| !c.is_whitespace()) else {
+        let value = Value::new(self.text, range);
+        for message in placeholders::messages(&value.decoded) {
+            self.message(&value, &message);
+        }
+    }
+
+    /// Takes one message of `value` as a 翻訳単位, leaving out the whitespace around it, which an
+    /// i18n message may need (`"Name: "`) and the engine would drop. A message without letters
+    /// outside its placeholders (`""`, `"42"`, `"—"`, `"%s"`) is not sent, as a Markdown block
+    /// without them is not.
+    fn message(&mut self, value: &Value<'a>, message: &[Inline]) {
+        let (Some(first), Some(last)) = (message.first(), message.last()) else {
             return;
         };
-        let last = chars
-            .iter()
-            .rposition(|(_, c)| !c.is_whitespace())
-            .unwrap_or(first);
-        let start = range.start + chars[first].0.start;
-        let end = range.start + chars[last].0.end;
-        let content = &chars[first..=last];
-        if !content.iter().any(|(_, c)| c.is_alphabetic()) {
+        let span = &value.decoded[inline_range(first).start..inline_range(last).end];
+        let trimmed = span.trim_start();
+        let start = inline_range(first).start + span.len() - trimmed.len();
+        let end = start + trimmed.trim_end().len();
+        let mut b = Builder::default();
+        for inline in message {
+            match inline {
+                Inline::Text(range) => {
+                    let range = range.start.max(start)..range.end.min(end);
+                    if !range.is_empty() {
+                        b.text(&value.decoded[range]);
+                    }
+                }
+                Inline::Placeholder(range) => {
+                    let shown = &value.decoded[range.clone()];
+                    b.kept_as("code", value.original(range.clone()), shown, shown);
+                }
+            }
+        }
+        if !b.has_words() {
             return;
         }
-        let original = &self.text[start..end];
-        let text = if original.contains('\\') {
-            Cow::Owned(content.iter().map(|(_, c)| c).collect())
-        } else {
+        let (text, tags) = b.finish();
+        let raw = value.raw(start..end);
+        let original = &self.text[raw.clone()];
+        let text = if tags.is_none() && !original.contains('\\') {
             Cow::Borrowed(original)
+        } else {
+            Cow::Owned(text)
         };
         self.segments
-            .push(Segment::Kept(&self.text[self.kept_from..start]));
+            .push(Segment::Kept(&self.text[self.kept_from..raw.start]));
         self.segments.push(Segment::Unit(Unit {
             text,
             original,
-            tags: None,
+            tags,
             lines: Lines::Json,
             attributes: Vec::new(),
         }));
-        self.kept_from = end;
+        self.kept_from = raw.end;
+    }
+}
+
+fn inline_range(inline: &Inline) -> &Range<usize> {
+    match inline {
+        Inline::Text(range) | Inline::Placeholder(range) => range,
+    }
+}
+
+/// A string value's content with its escapes undone, and where each of its characters is written.
+struct Value<'a> {
+    text: &'a str,
+    decoded: String,
+    /// Where each character of `decoded` starts in it, and its end.
+    starts: Vec<usize>,
+    /// Where each character is written in `text`.
+    written: Vec<Range<usize>>,
+    /// Where the content ends in `text`.
+    end: usize,
+}
+
+impl<'a> Value<'a> {
+    fn new(text: &'a str, range: Range<usize>) -> Self {
+        let chars = escaped_chars(&text[range.clone()]);
+        let mut decoded = String::new();
+        let mut starts = Vec::with_capacity(chars.len() + 1);
+        let mut written = Vec::with_capacity(chars.len());
+        for (at, c) in chars {
+            starts.push(decoded.len());
+            decoded.push(c);
+            written.push(range.start + at.start..range.start + at.end);
+        }
+        starts.push(decoded.len());
+        Value {
+            text,
+            decoded,
+            starts,
+            written,
+            end: range.end,
+        }
+    }
+
+    /// Where `text` writes the characters at `decoded`.
+    fn raw(&self, decoded: Range<usize>) -> Range<usize> {
+        self.at(decoded.start)..self.at(decoded.end)
+    }
+
+    fn at(&self, decoded: usize) -> usize {
+        let i = self
+            .starts
+            .binary_search(&decoded)
+            .expect("a range of the decoded value lies on its characters");
+        self.written
+            .get(i)
+            .map_or(self.end, |written| written.start)
+    }
+
+    /// The characters at `decoded` as `text` writes them.
+    fn original(&self, decoded: Range<usize>) -> &'a str {
+        &self.text[self.raw(decoded)]
     }
 }
 
@@ -345,17 +432,61 @@ mod tests {
     fn values_without_letters_are_not_sent() {
         assert_eq!(
             show(
-                r#"{"a": "", "b": "  ", "c": "42", "d": "—", "e": "%s", "f": "x"}"#,
+                r#"{"a": "", "b": "  ", "c": "42", "d": "—", "e": "%s", "g": "{name}", "f": "x"}"#,
                 &[]
             ),
             [
-                "={\"a\": \"\", \"b\": \"  \", \"c\": \"42\", \"d\": \"—\", \"e\": \"",
-                "[%s]",
-                "=\", \"f\": \"",
+                "={\"a\": \"\", \"b\": \"  \", \"c\": \"42\", \"d\": \"—\", \"e\": \"%s\", \"g\": \"{name}\", \"f\": \"",
                 "[x]",
                 "=\"}",
             ]
         );
+    }
+
+    #[test]
+    fn placeholders_go_as_kept_elements_and_a_choice_as_its_messages() {
+        let text = r#"{"a": "Hi {name}, you have %d new", "b": "{count, plural, one {# file} other {# files}} in \"{dir}\"", "c": " {{count}} "}"#;
+        assert_eq!(
+            show(text, &[]),
+            [
+                "={\"a\": \"",
+                "[Hi <code i=\"1\">{name}</code>, you have <code i=\"2\">%d</code> new]",
+                "=\", \"b\": \"{count, plural, one {",
+                "[<code i=\"1\">#</code> file]",
+                "=} other {",
+                "[<code i=\"1\">#</code> files]",
+                "=}} ",
+                "[in \"<code i=\"1\">{dir}</code>\"]",
+                "=\", \"c\": \" {{count}} \"}",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_placeholder_comes_back_as_the_original_escapes_it() {
+        let text = r#"["Say \"{{ \"x\" }}\" to {n\u0061me}"]"#;
+        let unit = segments(text, &[])
+            .unwrap()
+            .into_iter()
+            .find_map(|segment| match segment {
+                Segment::Unit(unit) => Some(unit),
+                Segment::Kept(_) => None,
+            })
+            .unwrap();
+        assert_eq!(
+            unit.text,
+            "Say \"<code i=\"1\">{{ \"x\" }}</code>\" to <code i=\"2\">{name}</code>"
+        );
+        assert_eq!(unit.original, r#"Say \"{{ \"x\" }}\" to {n\u0061me}"#);
+        let restored = unit
+            .tags
+            .unwrap()
+            .restore(
+                "<code i=\"2\">{名前}</code> に「<code i=\"1\">{{ x }}</code>」と言う",
+                |out, text| text.chars().for_each(|c| escape(out, c)),
+            )
+            .unwrap();
+        assert_eq!(restored, r#"{n\u0061me} に「{{ \"x\" }}」と言う"#);
     }
 
     #[test]
