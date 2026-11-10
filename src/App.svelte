@@ -129,6 +129,17 @@
     const formatSelected = sourceFormat;
     try {
       await settingsRead;
+      // Read again rather than taken from the notice, so a GGUF put in the directory by hand
+      // counts at once.
+      await checkModels();
+      if (id !== current) {
+        return;
+      }
+      if (missingModelsIn !== null) {
+        // The notice already says why and what to do; the engine's own "no GGUF" would repeat it.
+        announce("翻訳に使うモデルがありません");
+        return;
+      }
       // Detected again from the text being translated, not taken from the labels, whose detection
       // may still be waiting out its delay.
       const [detected, format] = await Promise.all([
