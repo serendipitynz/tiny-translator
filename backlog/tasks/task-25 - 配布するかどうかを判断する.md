@@ -1,10 +1,10 @@
 ---
 id: TASK-25
 title: 配布するかどうかを判断する
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-05 19:41'
-updated_date: '2026-11-10 08:10'
+updated_date: '2026-11-10 09:18'
 labels: []
 milestone: m-5
 dependencies:
