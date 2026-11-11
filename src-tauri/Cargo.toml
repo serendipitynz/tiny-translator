@@ -3,6 +3,7 @@ name = "tiny-translator"
 version = "0.1.0"
 description = "A small desktop translator that runs PLaMo 3 Translate locally"
 authors = ["Takuya Otani"]
+license = "MIT"
 edition = "2024"
 publish = false
 
