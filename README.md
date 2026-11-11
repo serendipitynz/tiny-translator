@@ -1,64 +1,75 @@
+<img src="src-tauri/icons/128x128@2x.png" alt="" width="128">
+
 # tiny-translator
 
-PLaMo 3 Translate をローカルで動かす簡易翻訳デスクトップアプリ。設計は `backlog/docs/` の doc-1、
-作業の単位は `backlog/tasks/` にある (Backlog.md で管理する)。
+> 日本語: [README.ja.md](README.ja.md)
 
-## 前提
+A small desktop translator that runs PLaMo 3 Translate locally. The design is doc-1 in
+`backlog/docs/`, and the units of work are in `backlog/tasks/` (managed with Backlog.md). Both are
+written in Japanese, as is the app's UI; this README quotes UI labels in Japanese with an
+English gloss.
 
-- Node.js 24 (`.node-version`) と pnpm 10 (`package.json` の `packageManager`)
-- Tauri 2 が求める Rust ツールチェーン (macOS では Xcode の Command Line Tools も)
-- Windows (x86_64) では、MSVC 向けの Rust (`x86_64-pc-windows-msvc`)、Visual Studio Build Tools の
-  「C++ によるデスクトップ開発」、WebView2 ランタイム (Windows 10 以降は通常入っている)
+## Prerequisites
 
-## 翻訳エンジンとモデル
+- Node.js 24 (`.node-version`) and pnpm 10 (`packageManager` in `package.json`)
+- The Rust toolchain Tauri 2 requires (on macOS, also the Xcode Command Line Tools)
+- On Windows (x86_64): Rust for MSVC (`x86_64-pc-windows-msvc`), the "Desktop development with C++"
+  workload of Visual Studio Build Tools, and the WebView2 runtime (usually present on Windows 10 and later)
 
-翻訳エンジン (llama-server) は Tauri の sidecar で、リポジトリには含めない。初めてビルドする前に、リポジトリのルートで
-次を実行して `src-tauri/binaries/` へ作る (llama.cpp を `~/.cache/tiny-translator/` へ取得して静的にビルドする)。これが無いと `cargo` の
-ビルド・テスト・clippy も失敗する。
+## Translation engine and model
 
-macOS (Apple Silicon) では Metal 版を作る。CMake が要る。
+The translation engine (llama-server) is a Tauri sidecar and is not in the repository. Before the
+first build, run the following at the repository root to build it into `src-tauri/binaries/` (the
+script fetches llama.cpp into `~/.cache/tiny-translator/` and builds it statically). Without it,
+`cargo` builds, tests and clippy fail too.
+
+On macOS (Apple Silicon) this builds the Metal variant. CMake is required.
 
 ```sh
 ./scripts/build-llama-server.sh
 ```
 
-Windows (x86_64) では Vulkan 版を作る。前提の Visual Studio Build Tools の「C++ によるデスクトップ開発」に加えて
-Vulkan SDK (`winget install KhronosGroup.VulkanSDK`) が要る。CMake は PATH に無ければ Visual Studio に同梱のものを使う。
-できる exe は OS の DLL と GPU ドライバーが入れる `vulkan-1.dll` だけを読み込む (スクリプトが `dumpbin` で確かめる)。
+On Windows (x86_64) this builds the Vulkan variant. In addition to the "Desktop development with C++"
+workload of Visual Studio Build Tools listed above, it needs the Vulkan SDK
+(`winget install KhronosGroup.VulkanSDK`). If CMake is not on PATH, the one bundled with Visual Studio
+is used. The resulting exe loads only OS DLLs and the `vulkan-1.dll` that the GPU driver installs
+(the script checks this with `dumpbin`).
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build-llama-server.ps1
 ```
 
-モデルの GGUF (既定は `plamo-3-translate-2b-Q4_K_M.gguf`) は、アプリの「モデルを入手」で Hugging Face の
-`pfnet/plamo-3-translate-*-GGUF` から取得する (PLaMo Community License への同意と SHA-256 の照合を伴う)。
-ネットワークの無い機械では、GGUF をアプリデータディレクトリの `models/` に手で置いてもよい
-(macOS では `~/Library/Application Support/com.serendipitynz.tiny-translator/models/`、Windows では
-`%APPDATA%\com.serendipitynz.tiny-translator\models\`。シンボリックリンクでもよい)。
-翻訳エンジンのログは `llama-server.log` に出る (macOS では `~/Library/Logs/com.serendipitynz.tiny-translator/`、
-Windows では `%LOCALAPPDATA%\com.serendipitynz.tiny-translator\logs\`)。
+The model GGUF (by default `plamo-3-translate-2b-Q4_K_M.gguf`) is fetched by the app's 「モデルを入手」
+(Get the model) from `pfnet/plamo-3-translate-*-GGUF` on Hugging Face, after agreeing to the PLaMo Community
+License and with a SHA-256 check. On a machine without a network, you can place the GGUF in `models/`
+under the app data directory by hand (`~/Library/Application Support/com.serendipitynz.tiny-translator/models/`
+on macOS, `%APPDATA%\com.serendipitynz.tiny-translator\models\` on Windows; a symbolic link also works).
+The translation engine logs to `llama-server.log` (in `~/Library/Logs/com.serendipitynz.tiny-translator/`
+on macOS, `%LOCALAPPDATA%\com.serendipitynz.tiny-translator\logs\` on Windows).
 
-## ライセンスの表示
+## License notices
 
-Built with PLaMo. 翻訳に使うモデル PLaMo 3 Translate は、Preferred Networks の
-[PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-ja) で提供される。
-アプリの「設定」の「ライセンス」から、条文の全文 (日本語版と英語版) と、使う人自身が守る条件
-(業務での利用の登録、長文の公表物での明示、訳文を渡すときの表示、重要な決定での制限) の案内を開ける。
+Built with PLaMo. The translation model, PLaMo 3 Translate, is provided by Preferred Networks under
+the [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-ja). From
+「ライセンス」 (License) in the app's 「設定」 (Settings) you can open the full license text (Japanese and English) and a
+guide to the conditions users must meet themselves (registering business use, attribution in long
+published works, the notice when handing over translations, and the restriction on important
+decisions).
 
-## 開発コマンド
+## Development commands
 
-リポジトリのルートで実行する。
+Run these at the repository root.
 
 ```sh
 pnpm install
-pnpm tauri dev       # アプリを起動する (Vite の開発サーバーも立ち上がる)
-pnpm check           # svelte-check (型と Svelte の検査)
+pnpm tauri dev       # launch the app (also starts the Vite dev server)
+pnpm check           # svelte-check (types and Svelte)
 pnpm lint            # biome lint
 pnpm test            # vitest
-pnpm build           # 画面を dist/ へビルドする
+pnpm build           # build the UI into dist/
 ```
 
-Rust 側は `src-tauri/` で実行する。
+Run the Rust side in `src-tauri/`.
 
 ```sh
 cargo clippy --all-targets -- -D warnings
@@ -66,50 +77,61 @@ cargo test
 cargo fmt --check
 ```
 
-`scripts/` には技術検証 (m-0) で使った計測用のスクリプトもあり、アプリのビルドとは独立している。
+`scripts/` also holds measurement scripts used in the technical validation (m-0); they are
+independent of the app build.
 
-## 配布物
+## Distribution
 
-配布物は macOS (Apple Silicon) の `.dmg` と Windows (x86_64) の NSIS インストーラー (`*-setup.exe`) で、
-GitHub Actions の `.github/workflows/release.yml` が作る (設計は doc-1 §13)。
+The app is distributed as a `.dmg` for macOS (Apple Silicon) and an NSIS installer (`*-setup.exe`)
+for Windows (x86_64), built by the GitHub Actions workflow `.github/workflows/release.yml` (design in
+doc-1 §13).
 
-- macOS の `.app` と `.dmg` は Developer ID で署名し、Apple の公証を受けている。
-- Windows のインストーラーはコード署名していない。ブラウザーでダウンロードすると、よく使われていないファイルとして警告が出るので、
-  「保存」の横のメニューから「保持する」、続けて「保持する」(英語版では Keep → Keep anyway) を選ぶ。そうして保存したインストーラーは、
-  2026-11-11 の確認ではダブルクリックで警告なく始まった。開いたときに SmartScreen が「Windows によって PC が保護されました」を出したら、
-  「詳細情報」から「実行」を選ぶ。インストール先は利用者ごとの `%LOCALAPPDATA%\tiny-translator\` で、管理者権限は要らない。
-- どちらにもモデルは入っていない。初回に「モデルを入手」で取得する。
-- 起動したときに 1 日 1 回まで新しいバージョンがあるかを確かめ、あれば画面で知らせる。「更新して再起動」で入れ替わる。
-  確かめるのをやめるには、設定の「更新」で「新しいバージョンを自動で確認する」を外す (doc-1 §14)。
-- 同梱するソフトウェアのライセンスは `THIRD-PARTY-LICENSES.txt` にあり、配布物にも入る
-  (macOS は `.app` の `Contents/Resources/`、Windows はインストール先のフォルダー)。
+- The macOS `.app` and `.dmg` are signed with a Developer ID and notarized by Apple.
+- The Windows installer is not code-signed. When downloaded in a browser, it is flagged as a file
+  that is not commonly downloaded. Open the menu next to "Save" and choose "Keep", then
+  "Keep anyway". An installer saved this way started without a warning on double-click when checked
+  on 2026-11-11. If SmartScreen shows "Windows protected your PC" on launch, choose "More info" and
+  then "Run anyway". It installs per user into `%LOCALAPPDATA%\tiny-translator\` and needs no
+  administrator rights.
+- Neither includes the model. Fetch it with 「モデルを入手」 (Get the model) on first use.
+- At launch the app checks for a new version at most once a day and shows a notice if there is one.
+  「更新して再起動」 (Update and restart) replaces the app. To stop the check, turn off
+  「新しいバージョンを自動で確認する」 (check for new versions automatically) under 「更新」 (Updates) in
+  「設定」 (Settings) (doc-1 §14).
+- The licenses of the bundled software are in `THIRD-PARTY-LICENSES.txt`, which is also shipped
+  (in the `.app`'s `Contents/Resources/` on macOS, in the install folder on Windows).
 
-### リリースの手順
+### Release steps
 
-1. `package.json`・`src-tauri/tauri.conf.json`・`src-tauri/Cargo.toml` の `version` をそろえて上げ、
-   `src-tauri/` で `cargo update -p tiny-translator` を実行して `Cargo.lock` も合わせる。
-2. 依存を変えたときは `THIRD-PARTY-LICENSES.txt` を作り直す (`pnpm test` が古いと失敗する)。
+1. Bump `version` in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` to the
+   same value, and run `cargo update -p tiny-translator` in `src-tauri/` to update `Cargo.lock` to match.
+2. If dependencies changed, regenerate `THIRD-PARTY-LICENSES.txt` (`pnpm test` fails when it is stale).
    ```sh
    cargo fetch --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --target x86_64-pc-windows-msvc
    node scripts/generate-third-party-licenses.mjs
    ```
-3. 既定のブランチにマージしたら、そのコミットに `vX.Y.Z` のタグを付けて push する。
-   ワークフローが下書きのリリースを作り、両 OS の配布物を検査してから置く。続けて更新物の署名を
-   `tauri.conf.json` の公開鍵で検証し、`latest.json` を置く。
-4. 下書きの配布物と自動生成のリリースノートを確かめて、手で公開する。下書きには `.dmg`・`*-setup.exe` のほかに、
-   更新物 (`*.app.tar.gz` と両 OS の `.sig`) と `latest.json` がある。公開すると、インストール済みのアプリが次の確認で新しいバージョンを見つける
-   (アプリは `releases/latest/download/latest.json` を読むので、下書きの間は届かない)。
+3. After merging into the default branch, tag that commit `vX.Y.Z` and push the tag. The workflow
+   creates a draft release and uploads the bundles for both OSes after checking them. It then verifies
+   the update artifacts' signatures against the public key in `tauri.conf.json` and uploads
+   `latest.json`.
+4. Check the draft's bundles and the generated release notes, then publish it by hand. Besides the
+   `.dmg` and `*-setup.exe`, the draft holds the update artifacts (`*.app.tar.gz` and the `.sig` files
+   for both OSes) and `latest.json`. Once published, installed apps find the new version at their next
+   check (the app reads `releases/latest/download/latest.json`, so a draft is not delivered).
 
-ワークフローは macOS の署名と公証に 6 つのリポジトリシークレットを使う。初めて使う前に、Developer ID Application の証明書を
-キーチェーンアクセスから `.p12` で書き出し、`.env.signing` (`.env.signing.example` を写して埋める) を用意して、次で登録する。
+The workflow uses six repository secrets for macOS signing and notarization. Before the first use,
+export the Developer ID Application certificate from Keychain Access as a `.p12`, prepare
+`.env.signing` (copy `.env.signing.example` and fill it in), and register them with:
 
 ```sh
 ./scripts/setup-ci-signing-secrets.sh path/to/DeveloperID.p12
 ```
 
-更新物には更新用の署名鍵 (minisign) で署名する。秘密鍵はオーナーの手元に保管し、失わないようにする。失うと、それ以降のバージョンを
-インストール済みのアプリへ届けられない。初めて使う前に鍵を作り、公開鍵 (`.pub` の中身) を `src-tauri/tauri.conf.json` の
-`plugins.updater.pubkey` に書き、秘密鍵とそのパスワードを 2 つのリポジトリシークレットに登録する。
+The update artifacts are signed with the updater signing key (minisign). The owner keeps the private
+key locally and must not lose it: without it, later versions cannot be delivered to installed apps.
+Before the first use, generate the key, write the public key (the contents of the `.pub` file) to
+`plugins.updater.pubkey` in `src-tauri/tauri.conf.json`, and register the private key and its
+password as two repository secrets.
 
 ```sh
 pnpm tauri signer generate -w ~/.tauri/tiny-translator-updater.key
@@ -117,9 +139,20 @@ gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/tiny-translator-updater.key
 gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-更新物は `src-tauri/tauri.release.conf.json` (`createUpdaterArtifacts`) を渡したビルドだけが作るので、手元の `pnpm tauri build` に秘密鍵は要らない。
-更新を手元で試すときは、別の識別子・ローカルの `latest.json` の URL・`"dangerousInsecureTransportProtocol": true` を `--config` で渡して古いバージョンと新しいバージョンを作り、
-新しいバージョンの更新物を `scripts/write-updater-manifest.py` (`minisign` が要る) で `latest.json` にして、HTTP サーバーで配る。
+Only a build given `src-tauri/tauri.release.conf.json` (`createUpdaterArtifacts`) produces update
+artifacts, so a local `pnpm tauri build` does not need the private key. To try an update locally,
+pass a different identifier, the URL of a local `latest.json` and
+`"dangerousInsecureTransportProtocol": true` with `--config` to build an old and a new version, turn
+the new version's update artifacts into `latest.json` with `scripts/write-updater-manifest.py`
+(requires `minisign`), and serve them over HTTP.
 
-手元の Mac で署名・公証した `.dmg` を作るときは、`.env.signing` を用意して `./scripts/macos-sign-build.sh` を実行する。
-できた `.app` と `.dmg` は `scripts/macos-verify-gatekeeper.sh` が Gatekeeper の判定で確かめる。
+To build a signed and notarized `.dmg` on a local Mac, prepare `.env.signing` and run
+`./scripts/macos-sign-build.sh`. `scripts/macos-verify-gatekeeper.sh` checks the resulting `.app` and
+`.dmg` against Gatekeeper's assessment.
+
+## License
+
+tiny-translator itself is licensed under the [MIT License](LICENSE). The licenses of the software
+bundled with it are in [THIRD-PARTY-LICENSES.txt](THIRD-PARTY-LICENSES.txt). The translation model,
+PLaMo 3 Translate, is part of neither the app nor its bundles; the model fetched with 「モデルを入手」
+(Get the model) is under the PLaMo Community License (see "License notices" above).
