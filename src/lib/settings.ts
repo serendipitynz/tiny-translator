@@ -181,7 +181,7 @@ export function fileNotice(file: FileState): { level: "info" | "degraded"; words
     case "newer":
       return {
         level: "degraded",
-        words: "設定ファイルはこの版より新しい版のアプリが保存したものです。そのアプリの設定を消さないよう、ここで変えた設定は保存しません。この起動の間だけ効きます。",
+        words: "設定ファイルはこのバージョンより新しいバージョンのアプリが保存したものです。そのアプリの設定を消さないよう、ここで変えた設定は保存しません。この起動の間だけ効きます。",
       };
     default:
       return null;
