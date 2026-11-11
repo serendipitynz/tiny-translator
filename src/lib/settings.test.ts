@@ -20,6 +20,7 @@ const settings: Settings = {
   model: null,
   launchClipboard: true,
   untranslatedKeys: [],
+  updateCheck: true,
 };
 
 describe("priorities", () => {
