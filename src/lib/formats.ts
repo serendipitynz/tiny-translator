@@ -6,6 +6,8 @@ const FORMATS: readonly { value: Format; label: string }[] = [
   { value: "text", label: "テキスト" },
   { value: "markdown", label: "Markdown" },
   { value: "json", label: "JSON" },
+  { value: "arb", label: "ARB" },
+  { value: "strings", label: ".strings" },
   { value: "html", label: "HTML" },
 ];
 

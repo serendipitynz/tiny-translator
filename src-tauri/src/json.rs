@@ -1,48 +1,64 @@
-//! JSON の翻訳単位 (doc-1 §7.1).
+//! JSON と ARB の翻訳単位 (doc-1 §7.1).
 //!
 //! A 翻訳単位 is the content of one string value. Everything else — keys, numbers, `true`,
 //! `false`, `null`, the punctuation and the whitespace between them — is copied from the original,
-//! so the translation keeps the original's structure, key order and layout exactly. The value's
-//! escapes are undone before it goes to the engine, and the translation is escaped again as it is
-//! written back. Its placeholders go as kept elements and come back as written, and the messages
-//! of an ICU argument that chooses one are 翻訳単位 of their own (`placeholders.rs`).
+//! so the translation keeps the original's structure, key order and layout exactly. The values are
+//! taken as `values.rs` takes a resource's, with JSON's escapes.
+//!
+//! ARB (Flutter's Application Resource Bundle) is JSON whose top-level keys starting with `@` hold
+//! the bundle's and each message's metadata (`@@locale`, `@greeting`'s `description` and
+//! `placeholders`): those stay as they are, and the messages are translated as JSON's values are.
 
-use std::borrow::Cow;
 use std::ops::Range;
 
-use crate::document::{Lines, Segment, Unit};
-use crate::placeholders::{self, Inline};
-use crate::tags::Builder;
+use serde_json::Value as Json;
+
+use crate::document::{Lines, Segment};
+use crate::values::{Units, Value};
 
 /// `text` as the 翻訳単位 of its string values and the original between them, or why `text` is not
 /// JSON. The values under a key named in `untranslated_keys` stay as they are, at any depth and
-/// however deep inside that value (2026-11-09 オーナー判断: the key's name, not its path).
+/// however deep inside that value (2026-11-09 オーナー判断: the key's name, not its path). With
+/// `arb`, so do the values of the top-level keys starting with `@`.
 pub fn segments<'a>(
     text: &'a str,
     untranslated_keys: &[String],
+    arb: bool,
 ) -> Result<Vec<Segment<'a>>, String> {
     // Checked by serde_json, which also bounds the nesting, so the scan below can take the text
     // as well-formed and recurse without running out of stack.
-    serde_json::from_str::<serde_json::Value>(text).map_err(|err| format!("not JSON: {err}"))?;
+    serde_json::from_str::<Json>(text).map_err(|err| format!("not JSON: {err}"))?;
     let mut scan = Scan {
         text,
         at: 0,
         untranslated_keys,
-        segments: Vec::new(),
-        kept_from: 0,
+        arb,
+        units: Units::new(text),
     };
-    scan.value(false);
-    scan.segments.push(Segment::Kept(&text[scan.kept_from..]));
-    Ok(scan.segments)
+    scan.value(false, true);
+    Ok(scan.units.finish())
+}
+
+/// Whether `json` reads as ARB: an object with the bundle's `@@locale`, or with the metadata
+/// `@name` of one of its own messages `name`. Plain JSON rarely has a key starting with `@`, and
+/// one that names another key is ARB's own way of describing it.
+pub fn is_arb(json: &Json) -> bool {
+    let Json::Object(object) = json else {
+        return false;
+    };
+    object.contains_key("@@locale")
+        || object.keys().any(|key| {
+            key.strip_prefix('@')
+                .is_some_and(|name| !name.is_empty() && object.contains_key(name))
+        })
 }
 
 struct Scan<'a, 'k> {
     text: &'a str,
     at: usize,
     untranslated_keys: &'k [String],
-    segments: Vec<Segment<'a>>,
-    /// Where the original not yet in `segments` starts.
-    kept_from: usize,
+    arb: bool,
+    units: Units<'a>,
 }
 
 impl<'a> Scan<'a, '_> {
@@ -56,16 +72,19 @@ impl<'a> Scan<'a, '_> {
         }
     }
 
-    /// Reads one value, taking its strings as 翻訳単位 unless `untranslated`.
-    fn value(&mut self, untranslated: bool) {
+    /// Reads one value, taking its strings as 翻訳単位 unless `untranslated`. `top` is the
+    /// outermost value, whose keys are where ARB writes its metadata.
+    fn value(&mut self, untranslated: bool, top: bool) {
         self.skip_whitespace();
         match self.byte() {
-            b'{' => self.object(untranslated),
+            b'{' => self.object(untranslated, top),
             b'[' => self.array(untranslated),
             b'"' => {
-                let content = self.string();
+                let range = self.string();
                 if !untranslated {
-                    self.unit(content);
+                    let chars = escaped_chars(&self.text[range.clone()]);
+                    let value = Value::new(self.text, range, chars);
+                    self.units.value(&value, &Lines::Json);
                 }
             }
             _ => {
@@ -81,7 +100,7 @@ impl<'a> Scan<'a, '_> {
         }
     }
 
-    fn object(&mut self, untranslated: bool) {
+    fn object(&mut self, untranslated: bool, top: bool) {
         self.at += 1;
         self.skip_whitespace();
         if self.byte() == b'}' {
@@ -94,7 +113,8 @@ impl<'a> Scan<'a, '_> {
             self.skip_whitespace();
             self.at += 1; // `:`
             let named = self.untranslated_keys.contains(&key);
-            self.value(untranslated || named);
+            let metadata = self.arb && top && key.starts_with('@');
+            self.value(untranslated || named || metadata, false);
             self.skip_whitespace();
             let end = self.byte();
             self.at += 1;
@@ -112,7 +132,7 @@ impl<'a> Scan<'a, '_> {
             return;
         }
         loop {
-            self.value(untranslated);
+            self.value(untranslated, false);
             self.skip_whitespace();
             let end = self.byte();
             self.at += 1;
@@ -135,127 +155,6 @@ impl<'a> Scan<'a, '_> {
         }
         self.at += 1;
         start..self.at - 1
-    }
-
-    /// Takes the string content at `range` as 翻訳単位: the whole value, or where an ICU argument
-    /// chooses a message, each of its messages and the text around it (`placeholders.rs`). The
-    /// placeholders go to the engine as kept elements, so the translation holds them as the original
-    /// writes them.
-    fn unit(&mut self, range: Range<usize>) {
-        let value = Value::new(self.text, range);
-        for message in placeholders::messages(&value.decoded) {
-            self.message(&value, &message);
-        }
-    }
-
-    /// Takes one message of `value` as a 翻訳単位, leaving out the whitespace around it, which an
-    /// i18n message may need (`"Name: "`) and the engine would drop. A message without letters
-    /// outside its placeholders (`""`, `"42"`, `"—"`, `"%s"`) is not sent, as a Markdown block
-    /// without them is not.
-    fn message(&mut self, value: &Value<'a>, message: &[Inline]) {
-        let (Some(first), Some(last)) = (message.first(), message.last()) else {
-            return;
-        };
-        let span = &value.decoded[inline_range(first).start..inline_range(last).end];
-        let trimmed = span.trim_start();
-        let start = inline_range(first).start + span.len() - trimmed.len();
-        let end = start + trimmed.trim_end().len();
-        let mut b = Builder::default();
-        for inline in message {
-            match inline {
-                Inline::Text(range) => {
-                    let range = range.start.max(start)..range.end.min(end);
-                    if !range.is_empty() {
-                        b.text(&value.decoded[range]);
-                    }
-                }
-                Inline::Placeholder(range) => {
-                    let shown = &value.decoded[range.clone()];
-                    b.placeholder("code", value.original(range.clone()), shown);
-                }
-            }
-        }
-        if !b.has_words() {
-            return;
-        }
-        let (text, tags) = b.finish();
-        let raw = value.raw(start..end);
-        let original = &self.text[raw.clone()];
-        let text = if tags.is_none() && !original.contains('\\') {
-            Cow::Borrowed(original)
-        } else {
-            Cow::Owned(text)
-        };
-        self.segments
-            .push(Segment::Kept(&self.text[self.kept_from..raw.start]));
-        self.segments.push(Segment::Unit(Unit {
-            text,
-            original,
-            tags,
-            lines: Lines::Json,
-            attributes: Vec::new(),
-        }));
-        self.kept_from = raw.end;
-    }
-}
-
-fn inline_range(inline: &Inline) -> &Range<usize> {
-    match inline {
-        Inline::Text(range) | Inline::Placeholder(range) => range,
-    }
-}
-
-/// A string value's content with its escapes undone, and where each of its characters is written.
-struct Value<'a> {
-    text: &'a str,
-    decoded: String,
-    /// Where each character of `decoded` starts in it, and its end.
-    starts: Vec<usize>,
-    /// Where each character is written in `text`.
-    written: Vec<Range<usize>>,
-    /// Where the content ends in `text`.
-    end: usize,
-}
-
-impl<'a> Value<'a> {
-    fn new(text: &'a str, range: Range<usize>) -> Self {
-        let chars = escaped_chars(&text[range.clone()]);
-        let mut decoded = String::new();
-        let mut starts = Vec::with_capacity(chars.len() + 1);
-        let mut written = Vec::with_capacity(chars.len());
-        for (at, c) in chars {
-            starts.push(decoded.len());
-            decoded.push(c);
-            written.push(range.start + at.start..range.start + at.end);
-        }
-        starts.push(decoded.len());
-        Value {
-            text,
-            decoded,
-            starts,
-            written,
-            end: range.end,
-        }
-    }
-
-    /// Where `text` writes the characters at `decoded`.
-    fn raw(&self, decoded: Range<usize>) -> Range<usize> {
-        self.at(decoded.start)..self.at(decoded.end)
-    }
-
-    fn at(&self, decoded: usize) -> usize {
-        let i = self
-            .starts
-            .binary_search(&decoded)
-            .expect("a range of the decoded value lies on its characters");
-        self.written
-            .get(i)
-            .map_or(self.end, |written| written.start)
-    }
-
-    /// The characters at `decoded` as `text` writes them.
-    fn original(&self, decoded: Range<usize>) -> &'a str {
-        &self.text[self.raw(decoded)]
     }
 }
 
@@ -337,7 +236,7 @@ mod tests {
             .iter()
             .map(|&key| key.to_owned())
             .collect();
-        segments(text, &keys)
+        segments(text, &keys, false)
             .unwrap()
             .into_iter()
             .filter_map(|segment| match segment {
@@ -380,7 +279,7 @@ mod tests {
             "{} {}",
             "'a'",
         ] {
-            let err = segments(text, &[]).unwrap_err();
+            let err = segments(text, &[], false).unwrap_err();
             assert!(err.starts_with("not JSON: "), "{text:?}: {err}");
         }
     }
@@ -397,7 +296,7 @@ mod tests {
     fn escapes_are_undone_for_the_engine_and_the_original_kept_as_written() {
         let keys = Vec::new();
         let text = r#"{"a": "Say \"hi\"\n\tto \u00e9t\u00E9 and \ud83d\ude00 \/ \\ back"}"#;
-        let unit = segments(text, &keys)
+        let unit = segments(text, &keys, false)
             .unwrap()
             .into_iter()
             .find_map(|segment| match segment {
@@ -465,7 +364,7 @@ mod tests {
     #[test]
     fn a_placeholder_comes_back_as_the_original_escapes_it() {
         let text = r#"["Say \"{{ \"x\" }}\" to {n\u0061me}"]"#;
-        let unit = segments(text, &[])
+        let unit = segments(text, &[], false)
             .unwrap()
             .into_iter()
             .find_map(|segment| match segment {

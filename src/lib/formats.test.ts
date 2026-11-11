@@ -9,6 +9,8 @@ describe("formatOptions", () => {
       { value: "text", label: "テキスト" },
       { value: "markdown", label: "Markdown" },
       { value: "json", label: "JSON" },
+      { value: "arb", label: "ARB" },
+      { value: "strings", label: ".strings" },
       { value: "html", label: "HTML" },
     ]);
   });
@@ -16,6 +18,7 @@ describe("formatOptions", () => {
   it("names the detected format in 自動", () => {
     expect(formatOptions("markdown")[0]).toEqual({ value: AUTO, label: "自動 (Markdown)" });
     expect(formatOptions("text")[0]).toEqual({ value: AUTO, label: "自動 (テキスト)" });
+    expect(formatOptions("strings")[0]).toEqual({ value: AUTO, label: "自動 (.strings)" });
     expect(formatOptions("html").slice(1)).toEqual(formatOptions(null).slice(1));
   });
 });

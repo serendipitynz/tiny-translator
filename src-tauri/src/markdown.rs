@@ -407,6 +407,7 @@ mod tests {
                         Lines::Join => " join".to_owned(),
                         Lines::Cell => " cell".to_owned(),
                         Lines::Json => " json".to_owned(),
+                        Lines::Strings(quote) => format!(" strings {quote}"),
                         Lines::Attribute(quote) => format!(" attribute {quote}"),
                     };
                     Some(format!("[{}]{lines}", unit.text))

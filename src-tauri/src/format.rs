@@ -6,13 +6,18 @@
 
 use std::ops::Range;
 
-use crate::{html, markdown};
+use crate::{html, json, markdown, strings};
 
 /// The format `text` is read as when the screen leaves the choice to the app, by its name in
-/// `src/lib/translate.ts`: `"json"`, `"html"`, `"markdown"` or `"text"`.
+/// `src/lib/translate.ts`: `"json"`, `"arb"`, `"strings"`, `"html"`, `"markdown"` or `"text"`.
 pub fn detect(text: &str) -> &'static str {
-    if is_json(text) {
-        return "json";
+    if let Some(value) = json_container(text) {
+        return if json::is_arb(&value) { "arb" } else { "json" };
+    }
+    // Before HTML and Markdown: a .strings value may hold their markup, and the file reads as
+    // .strings only when all of it is entries and comments.
+    if strings::is_strings(text) {
+        return "strings";
     }
     let markdown = markdown::signs(text);
     // A Markdown document showing HTML in its code (```html …```) is not HTML for that.
@@ -28,13 +33,12 @@ pub fn detect(text: &str) -> &'static str {
     "text"
 }
 
-/// Whether `text` is JSON holding an object or an array. A lone `true`, `null` or number is JSON
+/// `text` as JSON when it holds an object or an array. A lone `true`, `null` or number is JSON
 /// too, but as a source it is the English word or the figure, which JSON would leave untranslated.
-fn is_json(text: &str) -> bool {
-    matches!(
-        serde_json::from_str::<serde_json::Value>(text),
-        Ok(serde_json::Value::Object(_) | serde_json::Value::Array(_))
-    )
+fn json_container(text: &str) -> Option<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .filter(|value| value.is_object() || value.is_array())
 }
 
 /// `text` with the bytes in `ranges` made spaces.
@@ -58,6 +62,35 @@ mod tests {
     fn an_object_or_an_array_is_json() {
         assert_eq!(detect(r#"{"title": "Hello"}"#), "json");
         assert_eq!(detect("[\n  \"one\",\n  \"two\"\n]\n"), "json");
+    }
+
+    #[test]
+    fn json_with_arb_metadata_is_arb() {
+        assert_eq!(detect(r#"{"@@locale": "en", "title": "Hello"}"#), "arb");
+        assert_eq!(
+            detect(r#"{"title": "Hello", "@title": {"description": "The title"}}"#),
+            "arb"
+        );
+        // A key starting with `@` that describes no message is plain JSON's own.
+        assert_eq!(detect(r#"{"@type": "Person", "name": "Taro"}"#), "json");
+        assert_eq!(detect(r#"{"@": "x", "": "y"}"#), "json");
+        assert_eq!(detect(r#"[{"@@locale": "en"}]"#), "json");
+        assert_eq!(detect(r#"{"nested": {"@@locale": "en"}}"#), "json");
+    }
+
+    #[test]
+    fn apple_strings_entries_are_strings() {
+        assert_eq!(
+            detect(
+                "/* Title */\n\"title\" = \"Hello <b>%@</b>\";\n\"a\" = \"<p>x</p><p>y</p>\";\n"
+            ),
+            "strings"
+        );
+        assert_eq!(detect("\"# Title\" = \"# Title\";"), "strings");
+        // Names alone, or a line of code, are not.
+        assert_eq!(detect("a = b;"), "text");
+        assert_eq!(detect("let a = \"b\";"), "text");
+        assert_eq!(detect("\"a\" = \"b\""), "text");
     }
 
     #[test]

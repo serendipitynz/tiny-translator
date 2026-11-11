@@ -11,10 +11,12 @@ mod markdown;
 mod placeholders;
 mod repetition;
 mod settings;
+mod strings;
 mod tags;
 mod translate;
 mod units;
 mod update;
+mod values;
 
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -184,15 +186,16 @@ fn detect_language(text: String) -> Option<&'static str> {
 }
 
 /// The format `text` is read as when the screen leaves it to the app (doc-1 §7.2): `"json"`,
-/// `"html"`, `"markdown"` or `"text"`.
+/// `"arb"`, `"strings"`, `"html"`, `"markdown"` or `"text"`.
 #[tauri::command]
 fn detect_format(text: String) -> &'static str {
     format::detect(&text)
 }
 
-/// Translates `text`, read as `format` (`"text"`, `"markdown"`, `"json"` or `"html"`), into
-/// `target` 翻訳単位 by 翻訳単位 (doc-1 §7.1, §7.3), and answers `"done"` or `"stopped"`. JSON leaves the values under
-/// `untranslated_keys` (翻訳しないキー) as they are, and fails when `text` is not JSON. The
+/// Translates `text`, read as `format` (`"text"`, `"markdown"`, `"json"`, `"arb"`, `"strings"` or
+/// `"html"`), into `target` 翻訳単位 by 翻訳単位 (doc-1 §7.1, §7.3), and answers `"done"` or
+/// `"stopped"`. JSON, ARB and .strings leave the values under `untranslated_keys` (翻訳しないキー)
+/// as they are, and fail when `text` cannot be read as the format. The
 /// translation goes to `on_update` as it is generated, as `["append", text]` to add
 /// at the end or `["replace", text]` for the whole translation so far. Waits for the engine to
 /// start when it is 停止中, and keeps it from being released until the translation ends. A finished

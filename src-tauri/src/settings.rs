@@ -31,7 +31,7 @@ pub struct Settings {
     pub model: Option<String>,
     /// Whether 起動時のクリップボード翻訳 runs (doc-1 §6.3).
     pub launch_clipboard: bool,
-    /// JSON's 翻訳しないキー (doc-1 §7.1).
+    /// The 翻訳しないキー of JSON, ARB and .strings (doc-1 §7.1).
     pub untranslated_keys: Vec<String>,
     /// Whether the app asks for a newer version at launch (doc-1 §14). On by default (2026-11-11
     /// owner decision): off, a fix would reach only those who went looking for it.

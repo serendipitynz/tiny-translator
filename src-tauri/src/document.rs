@@ -2,7 +2,8 @@
 //!
 //! The format cuts the text into 翻訳単位 and the original between them: the whitespace between
 //! paragraphs for プレーンテキスト, the markup for Markdown (`markdown.rs`) and HTML (`html.rs`),
-//! everything but the string values for JSON (`json.rs`). Each piece goes to the
+//! everything but the string values for JSON and ARB (`json.rs`) and Apple .strings
+//! (`strings.rs`). Each piece goes to the
 //! engine as a prompt of its own, carrying the piece before it and that piece's translation, and
 //! the translation is put back together with the original between the pieces. A translation that
 //! starts repeating itself is cut off and made again sentence by sentence (doc-2 §1.1).
@@ -18,6 +19,7 @@ use crate::html;
 use crate::json;
 use crate::markdown;
 use crate::repetition::Repetition;
+use crate::strings;
 use crate::tags::{Hide, Tagged};
 use crate::translate::{self, Completion, Outcome};
 use crate::units;
@@ -90,6 +92,8 @@ pub enum Lines {
     Cell,
     /// Escaped, as the rest of the translation is, inside a JSON string.
     Json,
+    /// Escaped, as the rest of the translation is, inside a .strings string in these quotes.
+    Strings(char),
     /// As spaces, with the quote escaped: an HTML attribute value inside these quotes.
     Attribute(char),
 }
@@ -106,6 +110,7 @@ impl Lines {
                 (Lines::Join | Lines::Cell, '\n') => out.push(' '),
                 (Lines::Cell, '|') if !out.ends_with('\\') => out.push_str("\\|"),
                 (Lines::Json, c) => json::escape(out, c),
+                (Lines::Strings(quote), c) => strings::escape(out, c, *quote),
                 (Lines::Attribute(quote), c) => html::escape_attribute(out, c, *quote),
                 _ => out.push(c),
             }
@@ -122,17 +127,27 @@ pub enum Format {
     Json {
         untranslated_keys: Vec<String>,
     },
+    /// ARB, JSON whose metadata is not translated, nor the values under the keys named here.
+    Arb {
+        untranslated_keys: Vec<String>,
+    },
+    /// Apple .strings, whose values under the keys named here are not translated.
+    Strings {
+        untranslated_keys: Vec<String>,
+    },
     Html,
 }
 
 impl Format {
     /// The format the screen names (`src/lib/translate.ts`), with the screen's 翻訳しないキー,
-    /// which only JSON reads.
+    /// which JSON, ARB and .strings read.
     pub fn from_name(name: &str, untranslated_keys: Vec<String>) -> Option<Format> {
         match name {
             "text" => Some(Format::Text),
             "markdown" => Some(Format::Markdown),
             "json" => Some(Format::Json { untranslated_keys }),
+            "arb" => Some(Format::Arb { untranslated_keys }),
+            "strings" => Some(Format::Strings { untranslated_keys }),
             "html" => Some(Format::Html),
             _ => None,
         }
@@ -152,7 +167,9 @@ pub fn translate(
     let segments = match format {
         Format::Text => text_segments(text),
         Format::Markdown => markdown::segments(text),
-        Format::Json { untranslated_keys } => json::segments(text, untranslated_keys)?,
+        Format::Json { untranslated_keys } => json::segments(text, untranslated_keys, false)?,
+        Format::Arb { untranslated_keys } => json::segments(text, untranslated_keys, true)?,
+        Format::Strings { untranslated_keys } => strings::segments(text, untranslated_keys)?,
         Format::Html => html::segments(text),
     };
     let mut run = Run {
@@ -1512,6 +1529,212 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
         assert!(fake.prompts.is_empty());
     }
 
+    const ARB: &str = r#"{
+  "@@locale": "en",
+  "@@last_modified": "2026-11-11",
+  "appTitle": "Tiny Translator",
+  "@appTitle": {
+    "description": "The title of the app"
+  },
+  "greeting": "Hello {userName}!",
+  "@greeting": {
+    "description": "Greets the user",
+    "placeholders": {
+      "userName": {"type": "String", "example": "Taro"}
+    }
+  },
+  "items": "{count, plural, =0{No items} one{{count} item} other{{count} items}}",
+  "@items": {"placeholders": {"count": {"type": "int"}}},
+  "id": "home"
+}"#;
+
+    #[test]
+    fn arb_keeps_its_metadata_and_placeholders_and_translates_its_messages() {
+        let mut fake = Fake::new(|input| {
+            Reply::Text(
+                match input {
+                    "Tiny Translator" => "小さな「翻訳機」",
+                    // What is inside the tag is changed, and comes back as written.
+                    "Hello <code i=\"1\">{userName}</code>!" => {
+                        "こんにちは、<code i=\"1\">{ユーザー名}</code>さん!"
+                    }
+                    "No items" => "項目なし",
+                    "<code i=\"1\">{count}</code> item" | "<code i=\"1\">{count}</code> items" => {
+                        "<code i=\"1\">{count}</code> 件"
+                    }
+                    other => panic!("not to be translated: {other:?}"),
+                }
+                .into(),
+            )
+        });
+        let format = Format::Arb {
+            untranslated_keys: vec!["id".into()],
+        };
+        let (outcome, shown, _) = run_as(&mut fake, ARB, format);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(
+            shown,
+            ARB.replace("\"Tiny Translator\"", "\"小さな「翻訳機」\"")
+                .replace("\"Hello {userName}!\"", "\"こんにちは、{userName}さん!\"")
+                .replace(
+                    "=0{No items} one{{count} item} other{{count} items}",
+                    "=0{項目なし} one{{count} 件} other{{count} 件}"
+                )
+        );
+        // Read back as JSON, the translation has the original's keys and metadata.
+        let original: serde_json::Value = serde_json::from_str(ARB).unwrap();
+        let translated: serde_json::Value = serde_json::from_str(&shown).unwrap();
+        let (original, translated) = (
+            original.as_object().unwrap(),
+            translated.as_object().unwrap(),
+        );
+        assert!(original.keys().eq(translated.keys()));
+        for (key, value) in original {
+            if key.starts_with('@') || key == "id" {
+                assert_eq!(&translated[key], value, "{key}");
+            }
+        }
+        assert_eq!(translated["greeting"], "こんにちは、{userName}さん!");
+    }
+
+    const STRINGS: &str = r#"/* The title of the main window. */
+"window.title" = "Tiny Translator";
+
+// Names without quotes, as InfoPlist.strings writes them, stay as they are.
+CFBundleName = TinyTranslator;
+"greeting" = "Hello, %@!\nWelcome back.";
+"files" = "%1$@ has %2$lld files";
+"quote" = 'Say "hi"';
+"id" = "home";
+"#;
+
+    #[test]
+    fn strings_keeps_keys_comments_and_placeholders_and_translates_quoted_values() {
+        let mut fake = Fake::new(|input| {
+            Reply::Text(
+                match input {
+                    "Tiny Translator" => "小さな \"翻訳機\"",
+                    "Hello, <code i=\"1\">%@</code>!\nWelcome back." => {
+                        "ようこそ、<code i=\"1\">%名前</code>さん!\nお帰りなさい\\"
+                    }
+                    // Reordered, as Japanese puts them.
+                    "<code i=\"1\">%1$@</code> has <code i=\"2\">%2$lld</code> files" => {
+                        "<code i=\"2\">%2$lld</code> 個のファイルが <code i=\"1\">%1$@</code> に"
+                    }
+                    "Say \"hi\"" => "「hi」と 'x' に言う",
+                    other => panic!("not to be translated: {other:?}"),
+                }
+                .into(),
+            )
+        });
+        let format = Format::Strings {
+            untranslated_keys: vec!["id".into()],
+        };
+        let (outcome, shown, updates) = run_as(&mut fake, STRINGS, format);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(
+            shown,
+            r#"/* The title of the main window. */
+"window.title" = "小さな \"翻訳機\"";
+
+// Names without quotes, as InfoPlist.strings writes them, stay as they are.
+CFBundleName = TinyTranslator;
+"greeting" = "ようこそ、%@さん!\nお帰りなさい\\";
+"files" = "%2$lld 個のファイルが %1$@ に";
+"quote" = '「hi」と \'x\' に言う';
+"id" = "home";
+"#
+        );
+        let translated = read_strings(&shown);
+        let original = read_strings(STRINGS);
+        assert!(original.keys().eq(translated.keys()));
+        let string = |key: &str| translated.get(key).and_then(plist::Value::as_string);
+        assert_eq!(string("window.title"), Some("小さな \"翻訳機\""));
+        assert_eq!(
+            string("greeting"),
+            Some("ようこそ、%@さん!\nお帰りなさい\\")
+        );
+        assert_eq!(string("quote"), Some("「hi」と 'x' に言う"));
+        assert_eq!(string("CFBundleName"), Some("TinyTranslator"));
+        assert_eq!(string("id"), Some("home"));
+        #[cfg(target_os = "macos")]
+        assert_eq!(plutil(&shown), plutil_of(&translated));
+        // Every update the screen was sent keeps the strings escaped, as they stream in.
+        assert!(updates.iter().all(|update| !update.contains("さん!\nお")));
+    }
+
+    /// `text` as a dictionary, read as an old-style property list: a .strings file is one
+    /// without its braces.
+    fn read_strings(text: &str) -> plist::Dictionary {
+        plist::from_reader_ascii(format!("{{{text}}}").as_bytes()).unwrap()
+    }
+
+    /// `text` read by Apple's own reader, as JSON.
+    #[cfg(target_os = "macos")]
+    fn plutil(text: &str) -> serde_json::Value {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("plutil")
+            .args(["-convert", "json", "-o", "-", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn plutil_of(dictionary: &plist::Dictionary) -> serde_json::Value {
+        dictionary
+            .iter()
+            .map(|(key, value)| (key.clone(), value.as_string().unwrap().into()))
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    }
+
+    #[test]
+    fn a_strings_value_is_kept_when_its_translation_changes_a_placeholder() {
+        let text = "\"a\" = \"%@ left\";\n\"b\" = \"Next.\";\n";
+        let mut fake = Fake::new(|input| {
+            Reply::Text(
+                match input {
+                    i if i.contains('<') => "タグなし",
+                    "%@ left" => "残り %d",
+                    "Next." => "次。",
+                    other => panic!("not to be translated: {other:?}"),
+                }
+                .into(),
+            )
+        });
+        let format = Format::Strings {
+            untranslated_keys: Vec::new(),
+        };
+        let (outcome, shown, _) = run_as(&mut fake, text, format);
+        assert_eq!(outcome, Ok(Outcome::Done));
+        assert_eq!(shown, "\"a\" = \"%@ left\";\n\"b\" = \"次。\";\n");
+    }
+
+    #[test]
+    fn a_text_that_is_not_strings_fails_before_anything_is_sent() {
+        let mut fake = Fake::new(bracket);
+        let format = Format::Strings {
+            untranslated_keys: Vec::new(),
+        };
+        let (outcome, shown, updates) = run_as(&mut fake, "\"a\" = \"b\"\n", format);
+        assert_eq!(outcome.unwrap_err(), "not .strings: line 2: expected `;`");
+        assert_eq!(shown, "");
+        assert!(updates.is_empty());
+        assert!(fake.prompts.is_empty());
+    }
+
     #[test]
     fn formats_are_named_as_the_screen_names_them() {
         let keys = vec!["id".to_owned()];
@@ -1523,6 +1746,18 @@ SEE [THE GUIDE][the guide] AND THE NOTE[^1].
         assert_eq!(
             Format::from_name("json", keys.clone()),
             Some(Format::Json {
+                untranslated_keys: keys.clone()
+            })
+        );
+        assert_eq!(
+            Format::from_name("arb", keys.clone()),
+            Some(Format::Arb {
+                untranslated_keys: keys.clone()
+            })
+        );
+        assert_eq!(
+            Format::from_name("strings", keys.clone()),
+            Some(Format::Strings {
                 untranslated_keys: keys.clone()
             })
         );

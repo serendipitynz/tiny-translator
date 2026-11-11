@@ -4,18 +4,21 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 export type Outcome = "done" | "stopped";
 
 /** How the original is read (doc-1 §7.1): its structure is kept in the translation. */
-export type Format = "text" | "markdown" | "json" | "html";
+export type Format = "text" | "markdown" | "json" | "arb" | "strings" | "html";
 
 /**
- * The 翻訳しないキー until the settings are read (doc-1 §7.1): JSON values under a key of one of
- * these names stay as they are, at any depth. The settings screen (TASK-21) names the user's own.
+ * The 翻訳しないキー until the settings are read (doc-1 §7.1): JSON, ARB and .strings values under a
+ * key of one of these names stay as they are, at any depth. The settings screen (TASK-21) names the user's own.
  */
 export const DEFAULT_UNTRANSLATED_KEYS: readonly string[] = [];
 
 export interface TranslateRequest {
   text: string;
   format: Format;
-  /** JSON's 翻訳しないキー, matched by the whole key name; the other formats leave them unread. */
+  /**
+   * The 翻訳しないキー of JSON, ARB and .strings, matched by the whole key name; the other formats
+   * leave them unread.
+   */
   untranslatedKeys: readonly string[];
   /** The language code the prompt names as the output's `lang`. */
   target: string;
