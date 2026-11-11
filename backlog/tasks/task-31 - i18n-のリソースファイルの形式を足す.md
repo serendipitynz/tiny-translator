@@ -1,10 +1,10 @@
 ---
 id: TASK-31
 title: i18n のリソースファイルの形式を足す
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-10 09:59'
-updated_date: '2026-11-11 02:30'
+updated_date: '2026-11-11 03:10'
 labels: []
 dependencies:
   - TASK-28
@@ -53,4 +53,7 @@ ordinal: 31000
 - テスト: cargo test 252 件 (うち新規: strings 9・format 2・document 5)、clippy 警告 0、pnpm test 108 件、biome lint・svelte-check エラー 0。
 - 実測 (M2 の 2B Q4_K_M、アプリと同じ引数の llama-server に一時テストから接続): ARB 英日 9 メッセージ (翻訳単位 16、うちタグ付き 6) 20.4 秒、.strings 英日 10 エントリ (翻訳単位 9、うちタグ付き 5) 15.2 秒、.strings 日英 8 エントリ (翻訳単位 7、うちタグ付き 4) 11.3 秒。タグ付きの翻訳単位はすべてタグが保たれ、タグを外した訳し直しは 0 回。語順に合わせたプレースホルダーの入れ替えも戻せた。
 - 確かめていないこと: 実アプリ (pnpm tauri dev) での選択欄の見え方 (480px 幅で「自動 (.strings)」が収まるか) と、Windows での実行。
+
+- レビュー (Codex、2 回): 1 回目に [P2] 2 件。.strings の小文字の \u をエスケープとして読んでいた点と、8 進を Latin-1 で読んでいた点 (Apple は NeXTSTEP の文字コード) で、翻訳しないキーの照合が Xcode の読むキーとずれる。plutil で再現を確かめ、Core Foundation と同じ読み方に直した (0xFE・0xFF と数字の無い \U は NUL、\400 以上は下位 1 バイト)。8 進の \0〜\777 と \U の書き方を plutil と突き合わせる macOS のテストを足した。2 回目は指摘なしで APPROVE。修正後の cargo test は 253 件。
+- PR#32 でマージした。
 <!-- SECTION:NOTES:END -->
