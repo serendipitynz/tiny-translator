@@ -1,10 +1,10 @@
 ---
 id: TASK-35
 title: README を英語と日本語の 2 本にし、アプリアイコンと MIT の LICENSE を置く
-status: In Review
+status: Done
 assignee: []
 created_date: '2026-11-11 00:59'
-updated_date: '2026-11-11 01:21'
+updated_date: '2026-11-11 02:04'
 labels: []
 milestone: m-5
 dependencies: []
