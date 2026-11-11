@@ -208,9 +208,10 @@ fn decode(text: &str, written: &Written) -> String {
 }
 
 /// The characters of a quoted string's content as a .strings file writes them, each with where it
-/// is written. Core Foundation reads `\U` and up to four hex digits as a UTF-16 code unit, a
-/// backslash and up to three octal digits as a byte, the C escapes as C does, and a backslash before
-/// any other character as that character.
+/// is written, read as Core Foundation reads them, since a key is matched against 翻訳しないキー by
+/// what it reads as: `\U` and up to four hex digits as a UTF-16 code unit, a backslash and up to
+/// three octal digits as a NeXTSTEP byte, the C escapes as C does, and a backslash before any other
+/// character — `u` included — as that character.
 fn escaped_chars(raw: &str) -> Vec<(Range<usize>, char)> {
     let mut chars = Vec::new();
     let mut at = 0;
@@ -232,20 +233,16 @@ fn escaped_chars(raw: &str) -> Vec<(Range<usize>, char)> {
             'r' => ('\r', 2),
             't' => ('\t', 2),
             'v' => ('\u{b}', 2),
-            'U' | 'u' => unicode_escape(&raw[at..]),
+            'U' => unicode_escape(&raw[at..]),
             '0'..='7' => {
                 let digits = raw[at + 1..]
                     .bytes()
                     .take(3)
                     .take_while(|b| (b'0'..=b'7').contains(b))
                     .count();
-                let byte = u32::from_str_radix(&raw[at + 1..at + 1 + digits], 8).unwrap_or(0);
-                // A byte past ASCII is NeXTSTEP's encoding, which Latin-1 stands in for: it only
-                // goes to the engine, and the original is written back as it is.
-                (
-                    char::from_u32(byte).unwrap_or(char::REPLACEMENT_CHARACTER),
-                    1 + digits,
-                )
+                let value = u32::from_str_radix(&raw[at + 1..at + 1 + digits], 8).unwrap_or(0);
+                // `\400` and above wrap round to a byte, as Core Foundation's reader does.
+                (next_step((value & 0xFF) as u8), 1 + digits)
             }
             other => (other, 1 + other.len_utf8()),
         };
@@ -267,12 +264,13 @@ fn unicode_escape(raw: &str) -> (char, usize) {
         let value = u32::from_str_radix(&raw[at..at + digits], 16).ok()?;
         Some((value, digits))
     };
+    // A `\U` without digits is NUL to Core Foundation.
     let Some((high, digits)) = unit(2) else {
-        return ('U', 2);
+        return ('\0', 2);
     };
     let len = 2 + digits;
     if (0xD800..0xDC00).contains(&high)
-        && matches!(raw.get(len..len + 2), Some("\\U" | "\\u"))
+        && raw.get(len..len + 2) == Some("\\U")
         && let Some((low @ 0xDC00..0xE000, low_digits)) = unit(len + 2)
     {
         let code = 0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00);
@@ -285,6 +283,34 @@ fn unicode_escape(raw: &str) -> (char, usize) {
         char::from_u32(high).unwrap_or(char::REPLACEMENT_CHARACTER),
         len,
     )
+}
+
+/// The character NeXTSTEP's encoding writes as `byte`, after Unicode's mapping
+/// (MAPPINGS/VENDORS/NEXT/NEXTSTEP.TXT). Core Foundation reads 0xFE and 0xFF, which the encoding
+/// leaves undefined, as NUL.
+fn next_step(byte: u8) -> char {
+    const HIGH: [char; 126] = [
+        '\u{A0}', '\u{C0}', '\u{C1}', '\u{C2}', '\u{C3}', '\u{C4}', '\u{C5}', '\u{C7}', '\u{C8}',
+        '\u{C9}', '\u{CA}', '\u{CB}', '\u{CC}', '\u{CD}', '\u{CE}', '\u{CF}', '\u{D0}', '\u{D1}',
+        '\u{D2}', '\u{D3}', '\u{D4}', '\u{D5}', '\u{D6}', '\u{D9}', '\u{DA}', '\u{DB}', '\u{DC}',
+        '\u{DD}', '\u{DE}', '\u{B5}', '\u{D7}', '\u{F7}', '\u{A9}', '\u{A1}', '\u{A2}', '\u{A3}',
+        '\u{2044}', '\u{A5}', '\u{192}', '\u{A7}', '\u{A4}', '\u{2019}', '\u{201C}', '\u{AB}',
+        '\u{2039}', '\u{203A}', '\u{FB01}', '\u{FB02}', '\u{AE}', '\u{2013}', '\u{2020}',
+        '\u{2021}', '\u{B7}', '\u{A6}', '\u{B6}', '\u{2022}', '\u{201A}', '\u{201E}', '\u{201D}',
+        '\u{BB}', '\u{2026}', '\u{2030}', '\u{AC}', '\u{BF}', '\u{B9}', '\u{2CB}', '\u{B4}',
+        '\u{2C6}', '\u{2DC}', '\u{AF}', '\u{2D8}', '\u{2D9}', '\u{A8}', '\u{B2}', '\u{2DA}',
+        '\u{B8}', '\u{B3}', '\u{2DD}', '\u{2DB}', '\u{2C7}', '\u{2014}', '\u{B1}', '\u{BC}',
+        '\u{BD}', '\u{BE}', '\u{E0}', '\u{E1}', '\u{E2}', '\u{E3}', '\u{E4}', '\u{E5}', '\u{E7}',
+        '\u{E8}', '\u{E9}', '\u{EA}', '\u{EB}', '\u{EC}', '\u{C6}', '\u{ED}', '\u{AA}', '\u{EE}',
+        '\u{EF}', '\u{F0}', '\u{F1}', '\u{141}', '\u{D8}', '\u{152}', '\u{BA}', '\u{F2}', '\u{F3}',
+        '\u{F4}', '\u{F5}', '\u{F6}', '\u{E6}', '\u{F9}', '\u{FA}', '\u{FB}', '\u{131}', '\u{FC}',
+        '\u{FD}', '\u{142}', '\u{F8}', '\u{153}', '\u{DF}', '\u{FE}', '\u{FF}',
+    ];
+    match byte {
+        0..0x80 => char::from(byte),
+        0xFE | 0xFF => '\0',
+        _ => HIGH[usize::from(byte - 0x80)],
+    }
 }
 
 #[cfg(test)]
@@ -383,13 +409,51 @@ mod tests {
 
     #[test]
     fn escapes_are_undone_for_the_engine_and_the_original_kept_as_written() {
-        let unit =
-            the_unit(r#""k" = "Say \"hi\"\n\tto \U00e9t\u00E9 \UD83D\UDE00 \101 \' \\ back";"#);
-        assert_eq!(unit.text, "Say \"hi\"\n\tto été 😀 A ' \\ back");
+        let unit = the_unit(
+            r#""k" = "Say \"hi\"\n\tto \U00e9t\U00E9 \UD83D\UDE00 \101 \351 \u0041 \' \\ back";"#,
+        );
+        // `\351` is NeXTSTEP's Ø, and `\u` is no escape to Core Foundation.
+        assert_eq!(unit.text, "Say \"hi\"\n\tto été 😀 A Ø u0041 ' \\ back");
         assert_eq!(
             unit.original,
-            r#"Say \"hi\"\n\tto \U00e9t\u00E9 \UD83D\UDE00 \101 \' \\ back"#
+            r#"Say \"hi\"\n\tto \U00e9t\U00E9 \UD83D\UDE00 \101 \351 \u0041 \' \\ back"#
         );
+    }
+
+    /// Every octal byte, and `\U` without digits, as Apple's own reader reads them.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn escapes_are_read_as_plutil_reads_them() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut written: Vec<String> = (0..=0o777).map(|byte| format!("\\{byte:o}x")).collect();
+        for raw in [r"\U", r"\Ux", r"\U0041", r"\u0041", r"\UD83D\UDE00"] {
+            written.push(raw.to_owned());
+        }
+        let file: String = written
+            .iter()
+            .enumerate()
+            .map(|(i, raw)| format!("\"k{i}\" = \"{raw}\";\n"))
+            .collect();
+        let mut child = Command::new("plutil")
+            .args(["-convert", "json", "-o", "-", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(file.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let read: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        for (i, raw) in written.iter().enumerate() {
+            let ours: String = escaped_chars(raw).into_iter().map(|(_, c)| c).collect();
+            assert_eq!(read[format!("k{i}")].as_str(), Some(ours.as_str()), "{raw}");
+        }
     }
 
     #[test]
@@ -406,11 +470,12 @@ mod tests {
 
     #[test]
     fn values_without_letters_and_untranslated_keys_are_kept() {
-        let text = "\"a\" = \"\";\n\"b\" = \"%@\";\n\"c\" = \"42\";\n\"id\" = \"home\";\n\"i\\U0064s\" = \"x\";\n\"d\" = \"Sent\";";
+        // Core Foundation reads `caf\351` as `cafØ`, and `i\u0064` as `iu0064`, not `id`.
+        let text = "\"a\" = \"\";\n\"b\" = \"%@\";\n\"c\" = \"42\";\n\"id\" = \"home\";\n\"i\\U0064s\" = \"x\";\n\"caf\\351\" = \"Kept\";\n\"i\\u0064\" = \"Sent\";";
         assert_eq!(
-            show(text, &["id", "ids"]),
+            show(text, &["id", "ids", "cafØ"]),
             [
-                "=\"a\" = \"\";\n\"b\" = \"%@\";\n\"c\" = \"42\";\n\"id\" = \"home\";\n\"i\\U0064s\" = \"x\";\n\"d\" = \"",
+                "=\"a\" = \"\";\n\"b\" = \"%@\";\n\"c\" = \"42\";\n\"id\" = \"home\";\n\"i\\U0064s\" = \"x\";\n\"caf\\351\" = \"Kept\";\n\"i\\u0064\" = \"",
                 "[Sent]",
                 "=\";",
             ]
