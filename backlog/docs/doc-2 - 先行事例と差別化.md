@@ -3,7 +3,7 @@ id: doc-2
 title: 先行事例と差別化
 type: other
 created_date: '2026-11-05 19:39'
-updated_date: '2026-11-10 08:15'
+updated_date: '2026-11-11 00:10'
 ---
 # 先行事例と差別化
 
@@ -17,13 +17,13 @@ PLaMo 3 Translate の重み公開 (2026-11-05) の翌日に調べ、m-5 の配�
 - https://github.com/tanakh/plamo-translate-desktop 。2026-11-05 作成、Apache-2.0。
 - 2026-11-10 時点で v0.5.0。6 日で 6 回リリースしている。スター 130、外部からの PR も入り始めた (macOS 対応とブラウザ拡張のショートカット)。
 
-| 版 | 日付 | 主な追加 |
+| バージョン | 日付 | 主な追加 |
 |---|---|---|
 | v0.1.0 | 11-05 | Windows x86_64 と Linux x86_64 の配布物 |
 | v0.2.0 | 11-06 | Chrome / Edge 拡張 (選択範囲とページの翻訳。アプリの横に置くホストが翻訳する) |
 | v0.3.0 | 11-06 | Intel NPU 版の Windows パッケージ、デバイスの速度を測って選ぶ機能 |
 | v0.4.0 | 11-07 | **macOS (Apple Silicon、macOS 13.3 以降、Metal) の dmg**。拡張だけでブラウザ内で翻訳するエンジン (wllama、WebGPU) |
-| v0.5.0 | 11-10 | アプリの自動更新、モデルの新しい版の検出と更新、モデルの置き場所の変更、UI の拡大率 |
+| v0.5.0 | 11-10 | アプリの自動更新、モデルの新しいバージョンの検出と更新、モデルの置き場所の変更、UI の拡大率 |
 
 - Rust + GPUI。llama.cpp を `llama-cpp-2` でプロセス内に組み込み、GGUF を CPU (AVX2 / AVX-512)、Vulkan、Metal、OpenVINO (Intel NPU) で動かす。
 - 設計書 (`docs/design.md`) §1 は今も主対象を Windows、副対象を Linux とし、macOS を「Non-goals for now」に残している。
