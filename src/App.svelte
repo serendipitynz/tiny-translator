@@ -34,6 +34,8 @@
   import Select from "./lib/ui/Select.svelte";
   import TextArea from "./lib/ui/TextArea.svelte";
   import Toast from "./lib/ui/Toast.svelte";
+  import { checkForUpdate, type UpdateState, watchUpdate } from "./lib/update";
+  import UpdateNotice from "./UpdateNotice.svelte";
 
   let source = $state("");
   let target = $state("");
@@ -213,9 +215,23 @@
     }
   }
 
+  // doc-1 §14: at launch, and at every launch after it while the app runs, since the app may stay
+  // open for days. The app asks at most once a day and only when the settings allow it; a check
+  // that fails says nothing, since no network is the normal case (R1).
+  function checkUpdateQuietly() {
+    checkForUpdate(false).catch(() => {});
+  }
+
+  let update = $state<UpdateState>({ phase: "none" });
+  $effect(() => watchUpdate((state) => (update = state)));
+
   onMount(() => {
     void translateClipboard();
-    return onLaunchedAgain(() => void translateClipboard());
+    checkUpdateQuietly();
+    return onLaunchedAgain(() => {
+      void translateClipboard();
+      checkUpdateQuietly();
+    });
   });
 
   function onContextmenu(event: MouseEvent) {
@@ -344,14 +360,19 @@
     </div>
   </header>
 
-  <main class:missing-model={missingModelsIn !== null}>
-    {#if missingModelsIn !== null}
-      <div class="missing-model-notice">
-        <Notice
-          level="degraded"
-          words={`翻訳に使うモデルがありません。モデルを入手するか、GGUF を ${missingModelsIn} に置いてください。`}
-        />
-        <Button label="モデルを入手" variant="primary" onpress={() => (fetchOpen = true)} />
+  <main class:noticed={missingModelsIn !== null || update.phase !== "none"}>
+    {#if missingModelsIn !== null || update.phase !== "none"}
+      <div class="notices">
+        <UpdateNotice state={update} />
+        {#if missingModelsIn !== null}
+          <div class="missing-model-notice">
+            <Notice
+              level="degraded"
+              words={`翻訳に使うモデルがありません。モデルを入手するか、GGUF を ${missingModelsIn} に置いてください。`}
+            />
+            <Button label="モデルを入手" variant="primary" onpress={() => (fetchOpen = true)} />
+          </div>
+        {/if}
       </div>
     {/if}
     <div class="directions">
@@ -514,8 +535,13 @@
     min-block-size: 0;
   }
 
-  main.missing-model {
+  main.noticed {
     grid-template-rows: auto auto minmax(min-content, 1fr) auto;
+  }
+
+  .notices {
+    display: grid;
+    gap: var(--snz-space-sm);
   }
 
   .missing-model-notice {
