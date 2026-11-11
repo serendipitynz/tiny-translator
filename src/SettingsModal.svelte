@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getVersion } from "@tauri-apps/api/app";
   import { tick } from "svelte";
   import {
     type Appearance,
@@ -41,8 +42,10 @@
   import Panel from "./lib/ui/Panel.svelte";
   import Select from "./lib/ui/Select.svelte";
   import TextArea from "./lib/ui/TextArea.svelte";
+  import { checkForUpdate, checkWords, type UpdateState, watchUpdate } from "./lib/update";
   import LicenceModal from "./LicenceModal.svelte";
   import ModelFetchModal from "./ModelFetchModal.svelte";
+  import UpdateNotice from "./UpdateNotice.svelte";
 
   interface Props {
     /** The settings are in effect: saved, or for this launch only when saving failed (doc-7 §5.3). */
@@ -71,6 +74,7 @@
   let idleRelease = $state("10");
   let launchClipboard = $state(true);
   let keysText = $state("");
+  let updateCheck = $state(true);
 
   let models = $state<Models | null>(null);
   let modelsFailure = $state<string | null>(null);
@@ -127,6 +131,7 @@
       idleRelease = String(settings.idleReleaseMinutes);
       launchClipboard = settings.launchClipboard;
       keysText = keysToText(settings.untranslatedKeys);
+      updateCheck = settings.updateCheck;
     } catch (error) {
       loadFailure = `設定を読み込めませんでした: ${error}`;
       return;
@@ -155,6 +160,43 @@
 
   let fetchOpen = $state(false);
   let licenceOpen = $state(false);
+
+  /** The running version, so the user can tell an update arrived; null until it is read. */
+  let version = $state<string | null>(null);
+  getVersion().then(
+    (read) => (version = read),
+    () => {},
+  );
+
+  let update = $state<UpdateState>({ phase: "none" });
+  $effect(() => watchUpdate((state) => (update = state)));
+
+  let checking = $state(false);
+  /** What the last 今すぐ確認 found, when the update notice does not say it. */
+  let checkResult = $state<string | null>(null);
+  let checkFailure = $state<string | null>(null);
+
+  // doc-1 §14: asked whenever pressed, whatever the setting and however recently the app asked.
+  async function checkNow() {
+    checking = true;
+    checkResult = null;
+    checkFailure = null;
+    try {
+      checkResult = checkWords(await checkForUpdate(true));
+      if (checkResult !== null) {
+        announce(checkResult);
+      }
+    } catch (error) {
+      checkFailure = `新しいバージョンを確認できませんでした: ${error}`;
+      announce(checkFailure);
+    } finally {
+      checking = false;
+    }
+  }
+
+  let checkBlocker = $derived(
+    update.phase === "downloading" || update.phase === "installing" ? "更新が終わるまで確認できません" : null,
+  );
 
   $effect(() => watchEngine((status) => (engine = status)));
 
@@ -195,6 +237,7 @@
           model,
           launchClipboard,
           untranslatedKeys: keysFromText(keysText),
+          updateCheck,
         },
   );
   let appearance = $derived<Appearance>({ family, mode });
@@ -382,6 +425,39 @@
       <p class="hint keys-hint">
         JSON を翻訳するとき、ここに書いた名前のキーの値は訳さずに残します。キーの名前が完全に一致すれば、どの深さでも残し、値が配列やオブジェクトなら中身もすべて残します。
       </p>
+
+      <Panel heading="更新">
+        {#snippet children()}
+          <div class="fields">
+            {#if version !== null}
+              <p class="version">このバージョン: {version}</p>
+            {/if}
+            {#if update.phase !== "none"}
+              <div class="update-state"><UpdateNotice state={update} /></div>
+            {/if}
+            <Checkbox
+              label="新しいバージョンを自動で確認する"
+              description="起動したときに 1 日 1 回まで、GitHub から新しいバージョンの情報を取得します。翻訳する文や設定は送りません。新しいバージョンがあれば画面でお知らせし、更新するかはそのときに選べます。"
+              bind:checked={updateCheck}
+            />
+            {#if checkFailure !== null}
+              <Notice level="failure" words={checkFailure} />
+            {/if}
+            <div class="check">
+              <Button
+                label="今すぐ確認"
+                busyLabel="確認中…"
+                busy={checking}
+                disabledReason={checkBlocker}
+                onpress={checkNow}
+              />
+              {#if checkResult !== null}
+                <p class="hint">{checkResult}</p>
+              {/if}
+            </div>
+          </div>
+        {/snippet}
+      </Panel>
     {/if}
 
     <!-- doc-9 §7: the panel 外観 holds the two axes and what doc-7 §5 says about them. Both families
@@ -469,8 +545,20 @@
     block-size: 6rem;
   }
 
+  .update-state {
+    justify-self: stretch;
+  }
+
+  .check {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--snz-space-sm);
+  }
+
   .hint,
   .engine,
+  .version,
   .built-with,
   .confirm {
     margin: 0;

@@ -112,7 +112,7 @@ export function appearanceNotice(stored: StoredAppearance): { level: "info" | "d
     );
     return {
       level: "info",
-      words: `保存されている配色の選択「${lacking.join("・")}」はこの版にありません。${labelOf(FAMILY_OPTIONS, INITIAL_APPEARANCE.family)}・${labelOf(MODE_OPTIONS, INITIAL_APPEARANCE.mode)}で表示しています。保存されている値は、配色を選び直して保存するまで消しません。`,
+      words: `保存されている配色の選択「${lacking.join("・")}」はこのバージョンにありません。${labelOf(FAMILY_OPTIONS, INITIAL_APPEARANCE.family)}・${labelOf(MODE_OPTIONS, INITIAL_APPEARANCE.mode)}で表示しています。保存されている値は、配色を選び直して保存するまで消しません。`,
     };
   }
   return null;

@@ -14,12 +14,13 @@ mod settings;
 mod tags;
 mod translate;
 mod units;
+mod update;
 
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clipboard::LaunchMemory;
 use engine::{Engine, EngineState, Status};
@@ -29,8 +30,10 @@ use settings::{FileState, Settings};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_window_state::StateFlags;
 use translate::Translator;
+use update::{Phase, Updates};
 
 /// Carries every change of the translation engine's state to the screen, as [`status_payload`].
 const ENGINE_STATE_EVENT: &str = "engine-state";
@@ -38,6 +41,20 @@ const ENGINE_STATE_EVENT: &str = "engine-state";
 /// Tells the screen the app was launched again while running, to do 起動時のクリップボード翻訳
 /// once more (doc-1 §5).
 const LAUNCHED_AGAIN_EVENT: &str = "launched-again";
+
+/// Carries every change of the update's phase to the screen, as [`update::payload`].
+const UPDATE_STATE_EVENT: &str = "update-state";
+
+/// How long asking for a newer version may take. Without network the request fails at once; this
+/// bounds a network that takes the request and never answers.
+const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long downloading the update may take as a whole: the plugin applies its timeout to the
+/// entire transfer, and the check's 30 seconds would cut off a 20 MB download on a slow line.
+const UPDATE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// How often the download's progress goes to the screen, rather than once for every chunk.
+const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 pub fn run() {
     tauri::Builder::default()
@@ -51,6 +68,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             #[cfg(target_os = "windows")]
             disable_browser_keys(app);
@@ -64,6 +82,7 @@ pub fn run() {
             app.manage(LaunchMemory::new(data_dir.join("launch-clipboard")));
             app.manage(open_history(&data_dir));
             app.manage(Downloads::default());
+            app.manage(Updates::new(&data_dir));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -85,7 +104,11 @@ pub fn run() {
             models_catalog,
             model_download,
             model_download_cancel,
-            engine_memory
+            engine_memory,
+            update_state,
+            update_check,
+            update_install,
+            update_dismiss
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -599,6 +622,120 @@ async fn model_download(
 #[tauri::command]
 fn model_download_cancel(downloads: State<'_, Downloads>) {
     downloads.cancel();
+}
+
+/// `{ phase, version?, received?, total?, reason? }` as [`update::payload`] gives it.
+#[tauri::command]
+fn update_state(updates: State<'_, Updates>) -> Value {
+    updates.payload()
+}
+
+fn emit_update(app: &AppHandle) {
+    let _ = app.emit(UPDATE_STATE_EVENT, app.state::<Updates>().payload());
+}
+
+/// Asks the release's `latest.json` whether a newer version is published (doc-1 §14), and answers
+/// `"available"` or `"none"`. A check at launch (`manual` false) answers `"skipped"` without asking
+/// when the settings turned it off or the last one was less than a day ago; either kind answers
+/// `"busy"` while an update is being installed.
+#[tauri::command]
+async fn update_check(app: AppHandle, manual: bool) -> Result<&'static str, String> {
+    let updates = app.state::<Updates>();
+    if !manual
+        && (!app.state::<Arc<SettingsStore>>().get().update_check
+            || !updates.launch_check_due(now_millis()))
+    {
+        return Ok("skipped");
+    }
+    if updates.busy() {
+        return Ok("busy");
+    }
+    let found = updater(&app)?.check().await.map_err(|err| {
+        let reason = err.to_string();
+        eprintln!("could not check for an update: {reason}");
+        reason
+    })?;
+    let available = found.is_some();
+    if updates.found(found, now_millis()) {
+        emit_update(&app);
+    }
+    Ok(if available { "available" } else { "none" })
+}
+
+fn updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+    let handle = app.clone();
+    app.updater_builder()
+        .timeout(UPDATE_CHECK_TIMEOUT)
+        // Windows only: the plugin starts the installer and ends the process at once, so
+        // RunEvent::Exit never comes. Left running, the engine would hold llama-server.exe open in
+        // the folder the installer is about to replace.
+        .on_before_exit(move || {
+            handle.state::<Downloads>().cancel();
+            handle.state::<Engine>().shutdown();
+        })
+        .build()
+        .map_err(|err| err.to_string())
+}
+
+/// Downloads the update the last check found, checks its signature against the key the app carries
+/// and puts it in place, then restarts the app (doc-1 §14). Progress goes out as `update-state`.
+/// Returns only when the update failed: on Windows the installer takes over and the app exits.
+#[tauri::command]
+async fn update_install(app: AppHandle) -> Result<(), String> {
+    let updates = app.state::<Updates>();
+    let mut update = updates.begin()?;
+    emit_update(&app);
+    update.timeout = Some(UPDATE_DOWNLOAD_TIMEOUT);
+    let mut received = 0u64;
+    let mut told = Instant::now();
+    let downloaded = update
+        .download(
+            |chunk, total| {
+                received += chunk as u64;
+                if told.elapsed() >= UPDATE_PROGRESS_INTERVAL {
+                    told = Instant::now();
+                    updates.set_phase(Phase::Downloading { received, total });
+                    emit_update(&app);
+                }
+            },
+            || {},
+        )
+        .await;
+    // The signature is checked inside the download: a package it does not verify never reaches
+    // `install`.
+    let bytes = match downloaded {
+        Ok(bytes) => bytes,
+        Err(err) => return update_failed(&app, &err.to_string()),
+    };
+    updates.set_phase(Phase::Installing);
+    emit_update(&app);
+    // Off the async runtime: replacing the app is file work, and on Windows the call never returns.
+    let installed = tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await;
+    let reason = match installed {
+        Ok(Ok(())) => app.restart(),
+        Ok(Err(err)) => err.to_string(),
+        Err(err) => err.to_string(),
+    };
+    // On Windows on_before_exit may already have shut the engine down for an installer that then
+    // could not start; the app goes on, so translation has to as well.
+    app.state::<Engine>().resume();
+    update_failed(&app, &reason)
+}
+
+fn update_failed(app: &AppHandle, reason: &str) -> Result<(), String> {
+    eprintln!("could not install the update: {reason}");
+    app.state::<Updates>().set_phase(Phase::Failed {
+        reason: reason.to_owned(),
+    });
+    emit_update(app);
+    Err(reason.to_owned())
+}
+
+/// Sets the offered update aside: a check at launch offers it again a day later, 今すぐ確認 at once.
+#[tauri::command]
+fn update_dismiss(app: AppHandle) {
+    app.state::<Updates>().dismiss(now_millis());
+    emit_update(&app);
 }
 
 #[tauri::command]

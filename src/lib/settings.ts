@@ -16,6 +16,8 @@ export interface Settings {
   launchClipboard: boolean;
   /** JSON's 翻訳しないキー (doc-1 §7.1). */
   untranslatedKeys: string[];
+  /** Whether the app asks for a newer version at launch (doc-1 §14). */
+  updateCheck: boolean;
 }
 
 /** How `settings.json` stood when it was read at launch, or after the last save. */
@@ -151,6 +153,7 @@ export function sameSettings(a: Settings, b: Settings): boolean {
     a.idleReleaseMinutes === b.idleReleaseMinutes &&
     a.model === b.model &&
     a.launchClipboard === b.launchClipboard &&
+    a.updateCheck === b.updateCheck &&
     a.untranslatedKeys.length === b.untranslatedKeys.length &&
     a.untranslatedKeys.every((key, index) => key === b.untranslatedKeys[index])
   );
@@ -181,7 +184,7 @@ export function fileNotice(file: FileState): { level: "info" | "degraded"; words
     case "newer":
       return {
         level: "degraded",
-        words: "設定ファイルはこの版より新しい版のアプリが保存したものです。そのアプリの設定を消さないよう、ここで変えた設定は保存しません。この起動の間だけ効きます。",
+        words: "設定ファイルはこのバージョンより新しいバージョンのアプリが保存したものです。そのアプリの設定を消さないよう、ここで変えた設定は保存しません。この起動の間だけ効きます。",
       };
     default:
       return null;

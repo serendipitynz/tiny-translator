@@ -33,6 +33,9 @@ pub struct Settings {
     pub launch_clipboard: bool,
     /// JSON's 翻訳しないキー (doc-1 §7.1).
     pub untranslated_keys: Vec<String>,
+    /// Whether the app asks for a newer version at launch (doc-1 §14). On by default (2026-11-11
+    /// owner decision): off, a fix would reach only those who went looking for it.
+    pub update_check: bool,
 }
 
 impl Default for Settings {
@@ -44,6 +47,7 @@ impl Default for Settings {
             model: None,
             launch_clipboard: true,
             untranslated_keys: Vec::new(),
+            update_check: true,
         }
     }
 }
@@ -163,6 +167,10 @@ fn from_fields(fields: &Map<String, Value>, fallback: &Settings) -> Settings {
             .and_then(Value::as_bool)
             .unwrap_or(fallback.launch_clipboard),
         untranslated_keys,
+        update_check: fields
+            .get("updateCheck")
+            .and_then(Value::as_bool)
+            .unwrap_or(fallback.update_check),
     }
 }
 
@@ -175,6 +183,7 @@ pub fn to_value(settings: &Settings) -> Value {
         "model": settings.model,
         "launchClipboard": settings.launch_clipboard,
         "untranslatedKeys": settings.untranslated_keys,
+        "updateCheck": settings.update_check,
     })
 }
 
@@ -248,6 +257,7 @@ mod tests {
             model: Some("plamo-3-translate-0.8b-Q4_K_M.gguf".into()),
             launch_clipboard: false,
             untranslated_keys: vec!["id".into(), "url".into()],
+            update_check: false,
         }
     }
 
@@ -325,7 +335,8 @@ mod tests {
     fn a_value_of_the_wrong_kind_falls_back_on_its_own() {
         let dir = Dir::new("lenient");
         let text = r#"{"firstLanguage": "en", "secondLanguage": 3, "idleReleaseMinutes": -1,
-            "model": 5, "launchClipboard": "no", "untranslatedKeys": ["id", 2]}"#;
+            "model": 5, "launchClipboard": "no", "untranslatedKeys": ["id", 2],
+            "updateCheck": "off"}"#;
         fs::write(dir.file(), text).unwrap();
         let (settings, state) = load(&dir.file(), 1);
         assert_eq!(state, FileState::Read);

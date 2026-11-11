@@ -79,6 +79,8 @@ GitHub Actions の `.github/workflows/release.yml` が作る (設計は doc-1 §
   2026-11-11 の確認ではダブルクリックで警告なく始まった。開いたときに SmartScreen が「Windows によって PC が保護されました」を出したら、
   「詳細情報」から「実行」を選ぶ。インストール先は利用者ごとの `%LOCALAPPDATA%\tiny-translator\` で、管理者権限は要らない。
 - どちらにもモデルは入っていない。初回に「モデルを入手」で取得する。
+- 起動したときに 1 日 1 回まで新しいバージョンがあるかを確かめ、あれば画面で知らせる。「更新して再起動」で入れ替わる。
+  確かめるのをやめるには、設定の「更新」で「新しいバージョンを自動で確認する」を外す (doc-1 §14)。
 - 同梱するソフトウェアのライセンスは `THIRD-PARTY-LICENSES.txt` にあり、配布物にも入る
   (macOS は `.app` の `Contents/Resources/`、Windows はインストール先のフォルダー)。
 
@@ -92,8 +94,11 @@ GitHub Actions の `.github/workflows/release.yml` が作る (設計は doc-1 §
    node scripts/generate-third-party-licenses.mjs
    ```
 3. 既定のブランチにマージしたら、そのコミットに `vX.Y.Z` のタグを付けて push する。
-   ワークフローが下書きのリリースを作り、両 OS の配布物を検査してから置く。
-4. 下書きの配布物と自動生成のリリースノートを確かめて、手で公開する。
+   ワークフローが下書きのリリースを作り、両 OS の配布物を検査してから置く。続けて更新物の署名を
+   `tauri.conf.json` の公開鍵で検証し、`latest.json` を置く。
+4. 下書きの配布物と自動生成のリリースノートを確かめて、手で公開する。下書きには `.dmg`・`*-setup.exe` のほかに、
+   更新物 (`*.app.tar.gz` と両 OS の `.sig`) と `latest.json` がある。公開すると、インストール済みのアプリが次の確認で新しいバージョンを見つける
+   (アプリは `releases/latest/download/latest.json` を読むので、下書きの間は届かない)。
 
 ワークフローは macOS の署名と公証に 6 つのリポジトリシークレットを使う。初めて使う前に、Developer ID Application の証明書を
 キーチェーンアクセスから `.p12` で書き出し、`.env.signing` (`.env.signing.example` を写して埋める) を用意して、次で登録する。
@@ -101,6 +106,20 @@ GitHub Actions の `.github/workflows/release.yml` が作る (設計は doc-1 §
 ```sh
 ./scripts/setup-ci-signing-secrets.sh path/to/DeveloperID.p12
 ```
+
+更新物には更新用の署名鍵 (minisign) で署名する。秘密鍵はオーナーの手元に保管し、失わないようにする。失うと、それ以降のバージョンを
+インストール済みのアプリへ届けられない。初めて使う前に鍵を作り、公開鍵 (`.pub` の中身) を `src-tauri/tauri.conf.json` の
+`plugins.updater.pubkey` に書き、秘密鍵とそのパスワードを 2 つのリポジトリシークレットに登録する。
+
+```sh
+pnpm tauri signer generate -w ~/.tauri/tiny-translator-updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/tiny-translator-updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+```
+
+更新物は `src-tauri/tauri.release.conf.json` (`createUpdaterArtifacts`) を渡したビルドだけが作るので、手元の `pnpm tauri build` に秘密鍵は要らない。
+更新を手元で試すときは、別の識別子・ローカルの `latest.json` の URL・`"dangerousInsecureTransportProtocol": true` を `--config` で渡して古いバージョンと新しいバージョンを作り、
+新しいバージョンの更新物を `scripts/write-updater-manifest.py` (`minisign` が要る) で `latest.json` にして、HTTP サーバーで配る。
 
 手元の Mac で署名・公証した `.dmg` を作るときは、`.env.signing` を用意して `./scripts/macos-sign-build.sh` を実行する。
 できた `.app` と `.dmg` は `scripts/macos-verify-gatekeeper.sh` が Gatekeeper の判定で確かめる。
