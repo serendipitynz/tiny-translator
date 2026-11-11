@@ -58,7 +58,8 @@ pub struct Record<'a> {
     /// 翻訳元言語, or `None` when it was left to the model (doc-1 §6.1's 判定なし).
     pub source_lang: Option<&'a str>,
     pub target_lang: &'a str,
-    /// The format's name as the screen gives it (`"text"`, `"markdown"`, `"json"`, `"html"`).
+    /// The format's name as the screen gives it (`"text"`, `"markdown"`, `"json"`, `"arb"`,
+    /// `"strings"`, `"html"`).
     pub format: &'a str,
     pub model: &'a str,
     /// Milliseconds since the Unix epoch.

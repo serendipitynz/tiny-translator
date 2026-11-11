@@ -14,7 +14,7 @@ export interface Settings {
   model: string | null;
   /** Whether 起動時のクリップボード翻訳 runs (doc-1 §6.3). */
   launchClipboard: boolean;
-  /** JSON's 翻訳しないキー (doc-1 §7.1). */
+  /** The 翻訳しないキー of JSON, ARB and .strings (doc-1 §7.1). */
   untranslatedKeys: string[];
   /** Whether the app asks for a newer version at launch (doc-1 §14). */
   updateCheck: boolean;

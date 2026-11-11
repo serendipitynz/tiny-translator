@@ -415,7 +415,7 @@
         {/snippet}
       </Panel>
 
-      <Panel heading="JSON の翻訳しないキー">
+      <Panel heading="翻訳しないキー">
         {#snippet children(headingId)}
           <div class="keys">
             <TextArea bind:value={keysText} labelledby={headingId} placeholder="1 行に 1 つ (例: id)" />
@@ -423,7 +423,7 @@
         {/snippet}
       </Panel>
       <p class="hint keys-hint">
-        JSON を翻訳するとき、ここに書いた名前のキーの値は訳さずに残します。キーの名前が完全に一致すれば、どの深さでも残し、値が配列やオブジェクトなら中身もすべて残します。
+        JSON・ARB・.strings を翻訳するとき、ここに書いた名前のキーの値は訳さずに残します。キーの名前が完全に一致すれば、どの深さでも残し、値が配列やオブジェクトなら中身もすべて残します。
       </p>
 
       <Panel heading="更新">
