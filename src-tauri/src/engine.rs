@@ -169,6 +169,9 @@ struct Inner {
     /// the newly chosen model once the last lease is dropped.
     reload_pending: bool,
     shutting_down: bool,
+    /// Whether the supervisor thread is still looping; it ends once it sees `shutting_down`, and
+    /// [`Engine::resume`] starts another only when it has.
+    supervising: bool,
 }
 
 struct Running {
@@ -194,6 +197,7 @@ impl Engine {
                 idle_release: Some(DEFAULT_IDLE_RELEASE),
                 reload_pending: false,
                 shutting_down: false,
+                supervising: true,
             }),
             changed: Condvar::new(),
             spawn,
@@ -300,6 +304,22 @@ impl Engine {
         inner.shutting_down = true;
         self.shared.stop(&mut inner, None);
         self.shared.changed.notify_all();
+    }
+
+    /// Undoes [`Engine::shutdown`] when the exit it was for did not happen: on Windows the updater
+    /// shuts the engine down before it starts the installer, and the app stays when the installer
+    /// cannot start (doc-1 §14.2). The engine stays 停止中 and starts on the next translation.
+    pub fn resume(&self) {
+        let mut inner = self.shared.lock();
+        if !inner.shutting_down {
+            return;
+        }
+        inner.shutting_down = false;
+        if !inner.supervising {
+            inner.supervising = true;
+            let supervisor = Arc::clone(&self.shared);
+            thread::spawn(move || supervise(&supervisor));
+        }
     }
 }
 
@@ -492,6 +512,7 @@ fn supervise(shared: &Shared) {
     let mut inner = shared.lock();
     loop {
         if inner.shutting_down {
+            inner.supervising = false;
             return;
         }
         if stop_if_exited(shared, &mut inner) {
@@ -1141,6 +1162,29 @@ mod tests {
         assert!(!alive(pid));
         assert!(!pid_file.exists());
         assert_eq!(engine.acquire().err(), Some(AcquireError::ShuttingDown));
+    }
+
+    #[test]
+    fn a_resumed_engine_translates_and_releases_again() {
+        let fake = Fake::new();
+        let engine = fake.engine(None);
+        engine.start();
+        wait_for(&engine, EngineState::Ready);
+        engine.shutdown();
+        assert_eq!(engine.acquire().err(), Some(AcquireError::ShuttingDown));
+        let ended = Instant::now() + Duration::from_secs(5);
+        while engine.shared.lock().supervising {
+            assert!(Instant::now() < ended, "the supervisor did not end");
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        engine.resume();
+        engine.set_idle_release(Some(Duration::from_millis(100)));
+        drop(engine.acquire().unwrap());
+        assert_eq!(fake.spawns.load(Ordering::SeqCst), 2);
+        // Only a running supervisor releases the engine.
+        wait_for(&engine, EngineState::Stopped);
+        engine.shutdown();
     }
 
     #[test]

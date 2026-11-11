@@ -711,11 +711,15 @@ async fn update_install(app: AppHandle) -> Result<(), String> {
     emit_update(&app);
     // Off the async runtime: replacing the app is file work, and on Windows the call never returns.
     let installed = tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await;
-    match installed {
+    let reason = match installed {
         Ok(Ok(())) => app.restart(),
-        Ok(Err(err)) => update_failed(&app, &err.to_string()),
-        Err(err) => update_failed(&app, &err.to_string()),
-    }
+        Ok(Err(err)) => err.to_string(),
+        Err(err) => err.to_string(),
+    };
+    // On Windows on_before_exit may already have shut the engine down for an installer that then
+    // could not start; the app goes on, so translation has to as well.
+    app.state::<Engine>().resume();
+    update_failed(&app, &reason)
 }
 
 fn update_failed(app: &AppHandle, reason: &str) -> Result<(), String> {
