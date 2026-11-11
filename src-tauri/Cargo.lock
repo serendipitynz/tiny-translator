@@ -4333,6 +4333,7 @@ dependencies = [
  "html5gum",
  "objc2",
  "objc2-app-kit",
+ "plist",
  "pulldown-cmark",
  "rusqlite",
  "serde_json",
